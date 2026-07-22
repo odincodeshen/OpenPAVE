@@ -232,7 +232,7 @@ export ROS_DOMAIN_ID=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 cd control-daemon
-python3 pave_control_daemon_mvp.py
+python3 daemon.py
 ```
 
 ---
