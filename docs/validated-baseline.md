@@ -1,19 +1,49 @@
-# OpenPAVE Stage 3 Release Validation Guide
+# OpenPAVE Validated Baseline
 
-This guide is the primary release validation runbook for the current OpenPAVE Stage 3 runtime.
+Baseline version: v1.0
 
-Stage 3 does not replace the distributed OpenPAVE architecture. It provides one command that starts the local developer-facing runtime processes from Stage 1 and Stage 2, plus the Stage 3 prompt/scenario and benchmark validation workflow.
+Reference target: PuppyPi + DGX
 
-Use this document as the source of truth for reproducing the current release on a DGX/control machine and, optionally, a physical PuppyPi ROS 2 endpoint.
+Status: validated baseline, not final optimized runtime
+
+This guide is the primary runbook for reproducing the current OpenPAVE validated baseline.
+
+OpenPAVE Validated Baseline v1.0 proves a local brain-body Physical AI workflow before optimizing transport, control latency, and hardware coverage. It connects a local inference/control node to a robot/sensor endpoint through intent schema validation, runtime control, robot adapters, feedback files, UI observability, and benchmark scenarios.
+
+Use this document as the source of truth for reproducing the current baseline on a DGX/control machine and, optionally, the first validated physical target: PuppyPi.
+
+## Runtime Flow
+
+```mermaid
+flowchart LR
+    Sensor["Robot / Sensor Endpoint\nPuppyPi today, future targets later"]
+    UI["OpenPAVE /pave Console"]
+    VLM["OpenAI-compatible VLM/VLA Backend\nvLLM today"]
+    Ingress["Intent Ingress\nPOST /intent"]
+    Intent["Normalized Intent\nschema v0.1"]
+    Daemon["Control Daemon\nlifecycle + adapter dispatch"]
+    Adapter["Robot Adapter\nMockAdapter / PuppyPiAdapter"]
+    Robot["Robot Command Interface\nDockerized ROS 2 CLI today"]
+    Feedback["Command Result + Robot State"]
+    Bench["Benchmark Harness"]
+
+    Sensor --> UI
+    UI --> VLM --> UI
+    UI --> Ingress
+    Ingress --> Intent --> Daemon --> Adapter --> Robot
+    Daemon --> Feedback --> UI
+    Bench --> Ingress
+    Feedback --> Bench
+```
 
 ## Release Scope
 
-This release validates:
+Validated Baseline v1.0 covers:
 
 - repo-level Python environment setup
 - `ui/` submodule installation for the OpenPAVE `/pave` console
 - local vLLM/OpenAI-compatible VLM backend connectivity
-- Stage 3 launcher startup and shutdown behavior
+- runtime launcher startup and shutdown behavior
 - mock adapter control-path benchmark
 - PuppyPi adapter validation through Dockerized ROS 2 CLI calls
 - runtime feedback files for command result and robot state
@@ -36,18 +66,18 @@ The launcher writes logs to:
 
 ## External Dependencies
 
-These are still external dependencies in Stage 3:
+These are still external dependencies:
 
 - robot-side ROS 2 controller
 - robot/sensor stream source
 - vLLM or another OpenAI-compatible VLM backend
 - Docker images used by `PuppyPiAdapter`, such as `ros:humble` and `puppy-ros2-cli:humble`
 
-This keeps Stage 3 focused on developer runtime orchestration without hiding hardware or inference setup problems.
+This keeps the validated baseline focused on developer runtime orchestration without hiding hardware or inference setup problems.
 
 ## Install live-vlm-webui Observability UI
 
-The Stage 3 launcher starts the OpenPAVE console through the `ui/` submodule, which points to the OpenPAVE-maintained `live-vlm-webui` fork.
+The runtime launcher starts the OpenPAVE console through the `ui/` submodule, which points to the OpenPAVE-maintained `live-vlm-webui` fork.
 
 After cloning or pulling OpenPAVE, initialize the submodule and install it into the repo-level virtual environment:
 
@@ -264,11 +294,11 @@ ROBOT_IP_ADDRESS=192.168.0.8
 
 ## Start a vLLM Backend
 
-Stage 3 can start the OpenPAVE runtime without vLLM, but real VLM inference requires an OpenAI-compatible backend at the configured `UI_API_BASE`.
+OpenPAVE can start the local runtime without vLLM, but real VLM inference requires an OpenAI-compatible backend at the configured `UI_API_BASE`.
 
 Use a separate vLLM virtual environment to avoid dependency conflicts with the OpenPAVE repo-level `.venv`.
 
-OpenPAVE Stage 3 currently pins vLLM to `0.21.0` for demo stability. Newer vLLM releases may change engine defaults, memory behavior, dependency behavior, or API handling.
+Validated Baseline v1.0 currently pins vLLM to `0.21.0` for demo stability. Newer vLLM releases may change engine defaults, memory behavior, dependency behavior, or API handling.
 
 ```bash
 cd /path/to/OpenPAVE
@@ -521,7 +551,7 @@ http://127.0.0.1:8090/pave
 
 Use `/` for the full upstream `live-vlm-webui`.
 
-Use `/pave` for the lightweight OpenPAVE console when the checked-out `ui` submodule includes the Stage 2 console patch. If `/` works but `/pave` returns `404`, the current `live-vlm-webui` checkout does not include the OpenPAVE console route.
+Use `/pave` for the lightweight OpenPAVE console. If `/` works but `/pave` returns `404`, the current `live-vlm-webui` checkout does not include the OpenPAVE console route.
 
 The `/pave` console can also run a text-only prompt inference through:
 
@@ -709,9 +739,9 @@ curl -s http://127.0.0.1:7071/healthz
 curl -s http://127.0.0.1:8000/v1/models | head
 ```
 
-## Stage 3C Benchmark Validation
+## Benchmark Validation
 
-The benchmark harness runs from a second terminal while the Stage 3 runtime is already running.
+The benchmark harness runs from a second terminal while the OpenPAVE runtime is already running.
 
 ### Mock Control-Path Benchmark
 
@@ -757,7 +787,7 @@ Summarize one or more benchmark result files:
 python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 ```
 
-Compare model, endpoint, or inference-node dimensions by changing the grouping. This compares benchmark result files by their scenario metadata; Stage 3C.1 does not replay camera frames or measure VLM output quality yet.
+Compare model, endpoint, or inference-node dimensions by changing the grouping. This compares benchmark result files by their scenario metadata; Validated Baseline v1.0 does not replay camera frames or measure VLM output quality yet.
 
 ```bash
 python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl \
@@ -789,7 +819,7 @@ The command returns a non-zero exit code if any grouped result violates the gate
 
 ### Physical PuppyPi Benchmark
 
-Only run this after the PuppyPi ROS2 controller is running and the robot is in a safe test area.
+Only run this after the PuppyPi ROS 2 controller is running and the robot is in a safe test area.
 
 Terminal 1:
 
@@ -841,7 +871,7 @@ cat .openpave/runtime/vla_command_result.json
 
 ## Release Candidate Validation Checklist
 
-Before tagging a Stage 3 release, validate the following items on the target DGX/control machine:
+Before tagging a validated baseline release, validate the following items on the target DGX/control machine:
 
 1. Submodule and UI routes:
 

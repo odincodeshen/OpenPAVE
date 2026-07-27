@@ -2,132 +2,161 @@
 
 ## Purpose
 
-This document describes the PAVE reference workflow from an Arm/Linux Physical AI ecosystem perspective. It explains how PAVE is intended to connect local robot endpoints, edge inference devices, ROS2 communication, VLM/VLA logic, and observability tooling into a repeatable workflow for demos, research, PoCs, and architecture validation.
+This document describes OpenPAVE from an Arm/Linux Physical AI ecosystem perspective.
 
-This is a project-level reference workflow note. It is not an official Arm position, product statement, endorsement, or architecture specification.
+It is a project-level reference workflow note. It is not an official Arm position, product statement, endorsement, or architecture specification.
 
 ## Positioning
 
-PAVE focuses on a local, developer-controlled Physical AI workflow:
+OpenPAVE is a local-first validation workflow for edge Physical AI experiments and brain-body co-computing.
+
+The workflow connects:
 
 ```text
-robot camera / RTSP stream
--> local edge VLM/VLA inference
+body-side robot/sensor endpoint
+-> brain-side local inference/control node
+-> VLM/VLA reasoning
 -> normalized intent
 -> robot adapter
--> ROS2 command path
--> physical robot action
+-> robot command path
 -> state, command result, and benchmark feedback
 ```
 
-The current implementation uses PuppyPi as the first physical robot target. PuppyPi is a validation target for the workflow, not the final hardware boundary. Future hardware targets and compute devices are expected to be added as the runtime contracts become clearer.
+The current validated target is PuppyPi + DGX. That target proves the workflow, but it is not the project boundary.
 
 ## Why This Matters for the Arm Ecosystem
 
-Arm-based Linux systems are widely used as robot endpoints, embedded controllers, edge gateways, and developer-accessible robotics platforms. PAVE aims to show how these systems can participate in an end-to-end Physical AI workflow using open-source software and local inference infrastructure.
+Arm-based Linux systems are widely used as robot endpoints, embedded controllers, edge gateways, and developer-accessible robotics platforms.
 
-The value of the project is not only that a robot can be controlled by a VLM/VLA output. The value is that the full workflow can become understandable, replaceable, and repeatable:
+OpenPAVE aims to show how these systems can participate in local Physical AI workflows using open-source software and local inference infrastructure.
 
-- robot endpoint integration
-- camera or RTSP streaming
-- local edge inference
+The value is not only that a robot can be controlled by VLM/VLA output. The value is that the full workflow becomes understandable, replaceable, and repeatable:
+
+- robot/sensor endpoint integration
+- local inference/control node integration
+- prompt and scenario management
 - intent normalization
-- ROS2 command execution
-- robot state and command feedback
+- adapter-based robot command execution
+- command result and robot state feedback
 - lightweight observability UI
 - benchmark and scenario replay
 
 ## Workflow Layers
 
-### 1. Robot Endpoint Layer
+### 1. Body-Side Robot / Sensor Endpoint
 
-The robot endpoint provides sensors, motion control, and ROS2 services or topics. In the current project, PuppyPi is the first endpoint.
+The body-side endpoint provides sensors, local control, and robot-specific interfaces.
 
-Expected evolution:
+Current validated target:
 
-- keep PuppyPi as the first working adapter
-- add additional robot targets
-- avoid embedding PuppyPi-specific assumptions in the control daemon core
-- expose common capabilities through robot adapters
+- PuppyPi
 
-### 2. Edge Inference Layer
+Planned targets:
 
-The edge inference layer runs local VLM/VLA inference through an OpenAI-compatible backend such as vLLM or another local service.
+- SO-101 robot arm with camera
+- Raspberry Pi ROS 2 car/camera
+- additional robots, sensors, or simulation endpoints
 
-Expected evolution:
+### 2. Brain-Side Local Inference / Control Node
 
-- compare different inference devices
-- compare different model backends
-- track latency, throughput, GPU usage, and command-path timing
-- keep cloud inference optional rather than required
+The brain-side node runs local VLM/VLA inference, runtime services, UI, and benchmark tooling.
+
+Current validated target:
+
+- DGX running vLLM and OpenPAVE runtime services
+
+Planned targets:
+
+- Thor
+- additional Arm-based edge inference/control nodes
+- other OpenAI-compatible local VLM serving stacks
 
 ### 3. Intent Contract Layer
 
-The intent contract translates model output into a stable runtime command format.
+The intent contract translates model/user output into a stable runtime command format.
 
-Expected evolution:
+Current status:
 
-- define an intent schema
-- validate and normalize incoming intent payloads
-- include metadata such as source, timestamp, confidence, request ID, and schema version
-- keep unsafe or unknown outputs mapped to safe behavior, such as `STOP`
+- intent schema v0.1 implemented
+- `STOP`, `TROT`, `HOME`, and `MOVE` supported
+- metadata and validation rules implemented
+- unsafe or unknown output maps toward safe behavior
 
 ### 4. Robot Adapter Layer
 
-The robot adapter maps normalized intents to robot-specific control calls.
+The robot adapter maps normalized intents to target-specific control calls.
+
+Current status:
+
+- `MockAdapter`
+- `PuppyPiAdapter`
+- Dockerized ROS 2 CLI path for PuppyPi validation
 
 Expected evolution:
 
-- define a common adapter interface
-- implement `PuppyPiAdapter`
-- add mock or dry-run adapters for local development
-- add future hardware adapters without rewriting the control daemon core
+- target-specific adapters for SO-101 and Raspberry Pi ROS 2 car/camera
+- richer capability contracts
+- persistent robot bridge for lower-latency command execution
 
 ### 5. Observability Layer
 
 The observability layer helps developers see what the system is doing.
 
+Current status:
+
+- `/pave` console
+- live stream area
+- prompt/result panels
+- parsed intent
+- command result
+- robot state
+- system metrics
+
 Expected evolution:
 
-- replace the general VLM web UI frontend with a lightweight PAVE console
-- reuse the existing video backend at first
-- show live stream, CPU/GPU/memory usage, prompt, model result, parsed intent, robot state, and command result
+- OpenPAVE-native console decoupled from `live-vlm-webui`
+- richer target metadata
+- transport health and latency visibility
 
 ### 6. Experimentation Layer
 
-The experimentation layer makes demos and research runs repeatable.
+The experimentation layer makes validation repeatable.
+
+Current status:
+
+- prompt presets
+- scenario definitions
+- control-path benchmark harness
+- JSONL benchmark outputs
+- summary and gate checks
 
 Expected evolution:
 
-- add prompt presets
-- add demo scenarios
-- add benchmark harness
-- compare model, prompt, hardware, and scenario combinations
-- store structured results for later analysis
+- sensor replay
+- VLM/VLA output quality benchmarks
+- transport latency benchmarks
+- multi-target comparison
 
-## Relationship to Roadmap
+## Current Baseline and Future Work
 
-The current roadmap follows this dependency order:
+Validated Baseline v1.0 is intentionally simple and reproducible. It validates the integration path before optimizing brain-body transport, control latency, and hardware coverage.
 
-```text
-Stage 1: make the runtime portable
--> Stage 2: make the workflow visible
--> Stage 3: make experiments repeatable
-```
+Known future work:
 
-Stage 1 focuses on intent schema, robot adapters, and robot state or command feedback. This is the foundation that allows PAVE to move beyond a PuppyPi-specific demo.
-
-Stage 2 creates a lightweight PAVE UI while reusing the existing video backend. This keeps the UI work focused on workflow visibility instead of rebuilding the streaming stack too early.
-
-Stage 3 adds prompt presets, demo scenarios, and benchmark harnesses so the workflow can be reused across models, hardware, and Physical AI tasks.
+- improve brain-body transport beyond the current ROS 2 over Wi-Fi reference path
+- replace one-shot Dockerized ROS 2 CLI command execution with a persistent robot bridge
+- add SO-101 and Raspberry Pi ROS 2 car/camera targets
+- add sensor replay and end-to-end VLM/VLA quality benchmarks
+- decouple the OpenPAVE console from `live-vlm-webui`
 
 ## Non-Goals
 
-PAVE is not intended to be:
+OpenPAVE is not intended to be:
 
 - an official Arm reference design
 - a commercial robot control stack
 - a complete autonomous robotics platform
 - a replacement for vendor-specific robotics SDKs
+- an LLM serving framework like vLLM or Ollama
 
-PAVE is intended to be a practical, open, and adaptable workflow reference for developers exploring local Physical AI systems.
+OpenPAVE is intended to be a practical, open, local-first validation workflow for developers exploring edge Physical AI systems.
