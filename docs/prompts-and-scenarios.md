@@ -1,6 +1,6 @@
 # Prompt Presets and Demo Scenarios
 
-Stage 3B makes OpenPAVE experiments easier to repeat by storing prompt presets and demo scenarios as versioned repository assets.
+OpenPAVE stores prompt presets and demo scenarios as versioned repository assets so validated baseline runs can be repeated and compared.
 
 ## Prompt Presets
 

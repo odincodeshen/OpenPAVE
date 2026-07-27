@@ -10,12 +10,12 @@ The current control flow is:
 normalized intent
 -> control daemon dispatch
 -> robot adapter
--> robot-specific ROS2 command path
+-> robot-specific ROS 2 command path
 ```
 
 ## Adapter Interface
 
-The Stage 1B adapter interface exposes four common capabilities:
+The current adapter interface exposes four common capabilities:
 
 - `stop()`
 - `trot()`
@@ -33,7 +33,7 @@ These match the current MVP intent set from intent schema v0.1:
 
 ### PuppyPiAdapter
 
-`PuppyPiAdapter` is the default adapter. It preserves the existing PuppyPi behavior by issuing Dockerized ROS2 CLI calls.
+`PuppyPiAdapter` is the first physical target adapter. It preserves the existing PuppyPi behavior by issuing Dockerized ROS 2 CLI calls.
 
 Relevant environment variables:
 
@@ -54,7 +54,7 @@ puppy_control_msgs/msg/Velocity
 
 ### MockAdapter
 
-`MockAdapter` is a dry-run adapter for local development without robot hardware, Docker, or ROS2 network access.
+`MockAdapter` is a dry-run adapter for local development without robot hardware, Docker, or ROS 2 network access.
 
 Use it with:
 

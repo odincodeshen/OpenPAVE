@@ -1,6 +1,6 @@
-# Benchmark Harness
+# OpenPAVE Benchmark Harness
 
-Stage 3C adds a small control-path benchmark harness for OpenPAVE.
+The current benchmark harness validates the OpenPAVE control path for Validated Baseline v1.0.
 
 The first benchmark runner does not benchmark VLM inference. It validates the runtime control path:
 
@@ -17,7 +17,7 @@ This keeps the first benchmark repeatable and safe before adding camera frame da
 
 ## Start Runtime
 
-Start the Stage 3 runtime first.
+Start the OpenPAVE runtime first.
 
 For software-only validation:
 
@@ -168,6 +168,6 @@ python3 scripts/run_benchmark.py scenarios/mock-intent-stop-trot.json \
 
 ## Current Scope
 
-Stage 3C.1 measures control-path behavior and can summarize results by scenario metadata such as model, robot/sensor endpoint, adapter, and inference node. VLM inference latency, camera frame replay, FPS, GPU usage, and model output quality should be added in a later Stage 3C slice once benchmark input datasets are defined.
+Validated Baseline v1.0 measures control-path behavior and can summarize results by scenario metadata such as model, robot/sensor endpoint, adapter, and inference node. VLM inference latency, camera frame replay, FPS, GPU usage, transport latency, and model output quality should be added in future work once benchmark input datasets are defined.
 
 For a quick vLLM/UI smoke test outside the benchmark runner, use the `/pave` console's text-only inference path. That validates the OpenAI-compatible backend and prompt/result UI without requiring a camera stream.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Stage 1C adds a lightweight feedback channel for the control daemon. The goal is to make robot command execution observable without introducing a database, message broker, or new HTTP service.
+OpenPAVE uses a lightweight feedback channel for the control daemon. The goal is to make robot command execution observable without introducing a database, message broker, or new HTTP service.
 
 The feedback channel currently writes the latest command result and robot state as JSON files.
 
@@ -78,7 +78,7 @@ Example:
 }
 ```
 
-For `PuppyPiAdapter`, `steps` records ROS2 CLI call return codes, such as:
+For `PuppyPiAdapter`, `steps` records ROS 2 CLI call return codes, such as:
 
 - `set_running:true`
 - `set_mark_time:false`
@@ -114,6 +114,6 @@ Current state values are intentionally simple:
 ## Notes
 
 - The feedback files represent the latest state, not a historical event log.
-- The command result is suitable for Stage 2 UI display.
-- A benchmark harness can later sample or archive these files into JSONL/CSV.
+- The command result is suitable for OpenPAVE console display.
+- The benchmark harness can sample or archive these files into JSONL output.
 - Future implementations may replace or supplement this file channel with HTTP, WebSocket, ROS topics, MQTT, or a lightweight event queue.

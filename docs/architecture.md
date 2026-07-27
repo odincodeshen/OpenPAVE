@@ -1,131 +1,140 @@
-# OpenPAVE Reference Architecture
+# OpenPAVE Architecture
 
 ## Purpose
 
-OpenPAVE is a local-first Physical AI reference workflow for validating how ROS2 robot/sensor endpoints, Arm-based edge inference nodes, VLM/VLA reasoning, and runtime control feedback can be composed into a repeatable experimentation platform.
+OpenPAVE is a local-first validation workflow for edge Physical AI experiments and brain-body co-computing.
 
-The current DGX Spark + PuppyPi setup is a validated reference implementation, not the product boundary of OpenPAVE.
+The architecture helps developers validate how a brain-side local inference/control node connects to body-side robot or sensor endpoints, how runtime behavior can be observed, how scenarios can be benchmarked, and how hardware targets can be replaced.
+
+PuppyPi + DGX is the first validated target, not the project boundary.
+
+## Current Architecture
+
+```mermaid
+flowchart LR
+    subgraph Body["Body Side: Robot / Sensor Endpoint"]
+        Sensor["Sensor stream\ncamera today, future raw USB / ROS 2 image / lidar / audio"]
+        Controller["Robot-side controller\nROS 2 services/topics today"]
+    end
+
+    subgraph Brain["Brain Side: Local Inference / Control Node"]
+        Console["OpenPAVE /pave Console"]
+        VLM["OpenAI-compatible VLM/VLA backend\nvLLM today"]
+        Ingress["Intent Ingress\nHTTP /intent"]
+        Schema["Intent Schema\nv0.1"]
+        Daemon["Control Daemon"]
+        Adapter["Robot Adapter\nMockAdapter / PuppyPiAdapter"]
+        Feedback["Command Result\nRobot State"]
+        Bench["Benchmark Harness"]
+    end
+
+    Sensor --> Console
+    Console --> VLM
+    VLM --> Console
+    Console --> Ingress
+    Ingress --> Schema --> Daemon --> Adapter --> Controller
+    Daemon --> Feedback --> Console
+    Bench --> Ingress
+    Feedback --> Bench
+```
 
 ## Replaceable Roles
 
-### 1. ROS2 Robot / Sensor Endpoint
+### Body Side: Robot / Sensor Endpoint
 
 This role provides physical-world observations and accepts control commands.
 
 Responsibilities:
 
-- expose camera, depth, audio, lidar, robot state, or other ROS2 sensor streams
-- run robot-side ROS2 controllers, services, topics, or bridges
-- receive commands from an OpenPAVE robot adapter
+- expose camera, raw USB, ROS 2 image, depth, audio, lidar, robot state, or other sensor streams
+- run robot-side controllers, ROS 2 services/topics, or future bridge processes
+- receive commands from an OpenPAVE adapter or future transport-aware bridge
 - execute physical or simulated robot actions
 
 Current validation:
 
 - PuppyPi
 - PuppyPi camera stream
-- `puppy_control` ROS2 services and topics
+- `puppy_control` ROS 2 services and topics
 
-Future targets:
+Planned targets:
 
-- any ROS2 robot endpoint with an OpenPAVE adapter
-- mobile robots
-- robot arms
-- quadrupeds
-- sensor-only endpoints
-- simulation endpoints
+- SO-101 robot arm with camera + DGX
+- Raspberry Pi ROS 2 car/camera + DGX or Thor
+- additional robot/sensor endpoints with OpenPAVE adapters
 
-### 2. Edge Inference / Observability Node
+### Brain Side: Local Inference / Control Node
 
-This role runs local inference and provides developer-facing observability.
+This role runs inference, runtime control services, observability, and benchmarks.
 
 Responsibilities:
 
-- run VLM/VLA inference through an OpenAI-compatible VLM API
+- run VLM/VLA inference through an OpenAI-compatible API
 - display live robot/sensor streams
 - manage prompts and observe model outputs
-- show CPU, GPU, memory, and runtime feedback
-- provide an operator/debug UI for experiments
+- normalize high-level intent
+- dispatch validated commands through adapters
+- expose command result and robot state feedback
+- run benchmark scenarios
 
 Current validation:
 
-- DGX Spark
+- DGX
 - vLLM
 - `llava-hf/llava-v1.6-mistral-7b-hf`
-- modified `live-vlm-webui`
-- OpenPAVE `/pave` console
+- OpenPAVE `/pave` console through the `ui/` submodule
 
 Future targets:
 
-- Arm-based edge inference servers
-- Jetson or other Arm Linux systems
+- Thor
+- other Arm-based edge inference/control nodes
 - local VLM serving stacks compatible with OpenAI-style APIs
-- future local GPU/NPU/VPU inference runtimes
+- future GPU/NPU/VPU inference runtimes
 
-### 3. OpenPAVE Runtime Control Layer
+### OpenPAVE Runtime Control Layer
 
-This role turns high-level model or user intent into validated robot commands.
+The runtime control layer turns high-level model or user intent into validated robot commands.
 
-Responsibilities:
-
-- accept high-level intent from WebUI/VLM output, manual `curl`, scripts, tests, or future scenario runners
-- normalize intent into a versioned schema
-- dispatch commands through robot adapters
-- isolate robot-specific execution details from the control daemon core
-- write command result and robot/sensor state feedback
-- provide stable contracts for future benchmark and scenario tooling
-
-Current validation:
+Current components:
 
 - Intent Ingress API
-- `/tmp/vla_intent.json` file bus
+- normalized intent schema
 - Control Daemon
-- `PuppyPiAdapter`
 - `MockAdapter`
-- Dockerized ROS2 CLI command path
-- `/tmp/vla_command_result.json`
-- `/tmp/vla_robot_state.json`
+- `PuppyPiAdapter`
+- command result feedback
+- robot state feedback
+- benchmark harness
 
-Future targets:
+## Current Baseline Path
 
-- additional robot adapters
-- richer capability contracts
-- ROS2-native bridge implementations
-- non-file message bus options
-- heartbeat and liveness feedback
-- benchmark harness integration
-
-## Data Flow
+Validated Baseline v1.0 uses a simple, inspectable command path:
 
 ```text
-ROS2 robot/sensor stream
--> OpenPAVE UI / observability
--> OpenAI-compatible VLM API
--> VLM/VLA output
+OpenPAVE /pave or benchmark
 -> Intent Ingress
--> /tmp/vla_intent.json
+-> normalized intent
 -> Control Daemon
 -> Robot Adapter
--> ROS2 command interface
--> robot action
-
-Control Daemon
--> /tmp/vla_command_result.json
--> /tmp/vla_robot_state.json
--> OpenPAVE UI runtime feedback
+-> Dockerized ROS 2 CLI
+-> robot-side ROS 2 controller
 ```
 
-## Current Implementation Mapping
+This path favors reproducibility and debuggability over low-latency robot control.
 
-```text
-ROS2 Robot / Sensor Endpoint
-  Current: PuppyPi
+## Current Limitations
 
-Edge Inference / Observability Node
-  Current: DGX Spark + vLLM + live-vlm-webui + /pave
+### Brain-Body Transport
 
-OpenPAVE Runtime Control Layer
-  Current: Intent Ingress + Control Daemon + PuppyPiAdapter
-```
+The current PuppyPi target uses ROS 2 communication over the available network path. This is the baseline communication path, not the final optimized brain-body transport layer.
+
+Future work will add an upgraded open-source transport option and benchmark it against the current ROS 2 over Wi-Fi path.
+
+### Robot Command Execution
+
+The current `PuppyPiAdapter` uses one-shot Dockerized ROS 2 CLI calls. This is useful for validation and debugging, but inefficient for repeated, compound, or low-latency robot control.
+
+Future work will add a persistent robot bridge or transport-aware adapter while preserving the Docker CLI path as a fallback.
 
 ## Interfaces
 
@@ -151,17 +160,16 @@ or:
 }
 ```
 
-### Intent File Bus
-
-Default path:
-
-```text
-/tmp/vla_intent.json
-```
-
 ### Runtime Feedback
 
-Default paths:
+Default runtime feedback files:
+
+```text
+.openpave/runtime/vla_command_result.json
+.openpave/runtime/vla_robot_state.json
+```
+
+Legacy or manually configured runs may still use:
 
 ```text
 /tmp/vla_command_result.json
@@ -180,8 +188,9 @@ http://localhost:8000/v1
 
 ## Design Notes
 
-- PuppyPi and DGX Spark are validation targets, not the final project boundary.
-- Robot adapters are the intended contribution surface for new hardware.
-- Sensor assumptions should be explicit in future prompts, scenarios, and benchmarks.
-- `ROS_DOMAIN_ID` and `RMW_IMPLEMENTATION` must match across ROS2 participants.
-- DDS multicast must work on the LAN for the current Dockerized ROS2 CLI path.
+- PuppyPi + DGX is the first validated target, not the final hardware boundary.
+- Robot adapters are the current contribution surface for new hardware.
+- Sensor assumptions should be explicit in prompts, scenarios, and benchmarks.
+- `ROS_DOMAIN_ID` and `RMW_IMPLEMENTATION` must match across ROS 2 participants.
+- DDS/RMW behavior can vary by network, Docker image, firewall, and machine configuration.
+- Current benchmark coverage focuses on control-path validation; full sensor/VLM/VLA quality replay is future work.
