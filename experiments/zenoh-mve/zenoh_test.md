@@ -9,6 +9,13 @@ See [README.md](README.md) for the design; this file is the operational guide.
 **Goal:** DGX sends an intent → RPi receives it → RPi returns state → DGX measures
 round-trip. Fail-safe fires when the heartbeat stops. **No robot motion.**
 
+> **✅ Validated 2026-07-27** on DGX (`spark`, 192.168.0.24) ↔ RPi (`pi5`, 192.168.0.12)
+> over Wi-Fi, both running `odinlmshen/ros2-zenoh-arm:jazzy-edge`. All checks a–e pass;
+> round-trip **avg 9.9 ms** (8.9–10.4). See [Validated container commands](#validated-container-commands-2026-07-27).
+>
+> **Key finding:** for cross-host, every node's zenoh session **must be `mode: "client"`,
+> not the default `mode: "peer"`.** See [Pre-flight #3](#3-session-mode-must-be-client-cross-host).
+
 ---
 
 ## Pre-flight (before running anything)
@@ -37,6 +44,29 @@ ros2 pkg list | grep rmw_zenoh
 
 Use the **same `ros2-zenoh-arm` image tag on both hosts** — version skew between
 the two zenoh stacks is the most common silent failure.
+
+### 3. Session mode must be `client` (cross-host)
+
+The default `rmw_zenoh` session config is `mode: "peer"`. **Peer mode does not work
+across hosts here**: peers try to connect to each other *directly* and advertise their
+own locators — with `--net=host` a node advertises `tcp/127.0.0.1:<port>`, which the
+other host cannot reach (`Unable to connect to any locator of scouted peer
+[tcp/127.0.0.1:…]`).
+
+Set **every** node to `mode: "client"` so all traffic is relayed **through the router**
+— no direct peer links, no locator advertising. On each node, copy the default session
+config and edit it before launching:
+
+```bash
+cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5
+sed -i 's/mode: "peer"/mode: "client"/' /tmp/sess.json5
+# body only: point the connect endpoint at the router on the DGX
+sed -i 's#tcp/localhost:7447#tcp/<DGX-IP>:7447#g' /tmp/sess.json5
+export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5
+```
+
+The brain shares the router's host, so it keeps the default `tcp/localhost:7447` endpoint
+and only needs the `mode` change.
 
 ---
 
@@ -97,6 +127,9 @@ heartbeat lost -> FAIL-SAFE STOP (stub)
 
 Almost always the RPi's zenoh session is not reaching the DGX router. Check in order:
 
+0. **Node still in peer mode** (most common) — if a body log shows `Unable to connect to
+   any locator of scouted peer [tcp/127.0.0.1:…]`, the node is `mode: "peer"`. Switch it to
+   `mode: "client"` per [Pre-flight #3](#3-session-mode-must-be-client-cross-host).
 1. **Connect endpoint** — the RPi client must point at `tcp/<DGX-IP>:7447`. Reuse
    the client config you already validated in `ros2-zenoh-arm`; the DGX is just
    one more client alongside the RPi.
@@ -121,8 +154,64 @@ Almost always the RPi's zenoh session is not reaching the DGX router. Check in o
 
 ## Validation checklist
 
-- [ ] **a. discovery** — both nodes visible in `ros2 node list` across hosts
-- [ ] **b. downlink** — DGX intent logged by the body on the RPi
-- [ ] **c. uplink** — body state received by the probe on the DGX
-- [ ] **d. latency** — probe reports a round-trip time per request
-- [ ] **e. fail-safe** — killing the probe/router makes the body log the STOP stub
+- [x] **a. discovery** — both nodes visible across hosts (validated 2026-07-27)
+- [x] **b. downlink** — DGX intent logged by the body on the RPi
+- [x] **c. uplink** — body state received by the probe on the DGX
+- [x] **d. latency** — round-trip avg 9.9 ms (8.9–10.4) over Wi-Fi
+- [x] **e. fail-safe** — heartbeat loss makes the body log the STOP stub (~2.4 s)
+
+---
+
+## Validated container commands (2026-07-27)
+
+The runbook above is native-shell oriented; this is the exact **containerized** flow that
+passed, using `odinlmshen/ros2-zenoh-arm:jazzy-edge`. Containers are named `openpave-*`
+(additive, easy to remove). Replace `<DGX-IP>` with the DGX's LAN IP (e.g. 192.168.0.24).
+
+**Router — DGX:**
+
+```bash
+docker run -d --name openpave-router --net=host \
+  --shm-size=640m --ulimit memlock=-1:-1 --cap-add NET_ADMIN --security-opt seccomp=unconfined \
+  --entrypoint bash odinlmshen/ros2-zenoh-arm:jazzy-edge \
+  -lc 'source /opt/ros/jazzy/setup.bash && exec ros2 run rmw_zenoh_cpp rmw_zenohd'
+```
+
+**Body — RPi** (repo cloned at `~/OpenPAVE`; `mode: client` + endpoint → DGX):
+
+```bash
+docker run -d --name openpave-body --net=host \
+  -e RMW_IMPLEMENTATION=rmw_zenoh_cpp -e ROS_DOMAIN_ID=0 -v ~/OpenPAVE:/ws \
+  --shm-size=640m --ulimit memlock=-1:-1 --cap-add NET_ADMIN --security-opt seccomp=unconfined \
+  --entrypoint bash odinlmshen/ros2-zenoh-arm:jazzy-edge \
+  -lc 'source /opt/ros/jazzy/setup.bash \
+    && cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5 \
+    && sed -i "s#tcp/localhost:7447#tcp/<DGX-IP>:7447#g" /tmp/sess.json5 \
+    && sed -i "s/mode: \"peer\"/mode: \"client\"/" /tmp/sess.json5 \
+    && export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5 \
+    && exec python3 /ws/experiments/zenoh-mve/body_node.py'
+```
+
+**Brain — DGX** (repo cloned at `~/openpave-zenoh`; `mode: client`, local router):
+
+```bash
+docker run -d --name openpave-brain --net=host \
+  -e RMW_IMPLEMENTATION=rmw_zenoh_cpp -e ROS_DOMAIN_ID=0 -v ~/openpave-zenoh:/ws \
+  --shm-size=640m --ulimit memlock=-1:-1 \
+  --entrypoint bash odinlmshen/ros2-zenoh-arm:jazzy-edge \
+  -lc 'source /opt/ros/jazzy/setup.bash \
+    && cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5 \
+    && sed -i "s/mode: \"peer\"/mode: \"client\"/" /tmp/sess.json5 \
+    && export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5 \
+    && exec python3 /ws/experiments/zenoh-mve/brain_probe.py'
+```
+
+**Watch / test / clean up:**
+
+```bash
+docker logs -f openpave-brain          # DGX: sent / completed / SUMMARY
+docker logs -f openpave-body           # RPi: intents received
+docker stop openpave-brain             # -> body logs FAIL-SAFE STOP within ~2 s
+docker rm -f openpave-router openpave-brain   # DGX cleanup
+docker rm -f openpave-body                     # RPi cleanup
+```
