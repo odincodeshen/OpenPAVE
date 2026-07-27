@@ -1,8 +1,24 @@
-# OpenPAVE Stage 3A Developer Runtime Launcher
+# OpenPAVE Stage 3 Release Validation Guide
 
-This guide validates the OpenPAVE Stage 3A developer runtime launcher.
+This guide is the primary release validation runbook for the current OpenPAVE Stage 3 runtime.
 
-Stage 3A does not replace the distributed OpenPAVE architecture. It provides one command that starts the local developer-facing runtime processes that are already part of Stage 1 and Stage 2.
+Stage 3 does not replace the distributed OpenPAVE architecture. It provides one command that starts the local developer-facing runtime processes from Stage 1 and Stage 2, plus the Stage 3 prompt/scenario and benchmark validation workflow.
+
+Use this document as the source of truth for reproducing the current release on a DGX/control machine and, optionally, a physical PuppyPi ROS 2 endpoint.
+
+## Release Scope
+
+This release validates:
+
+- repo-level Python environment setup
+- `ui/` submodule installation for the OpenPAVE `/pave` console
+- local vLLM/OpenAI-compatible VLM backend connectivity
+- Stage 3 launcher startup and shutdown behavior
+- mock adapter control-path benchmark
+- PuppyPi adapter validation through Dockerized ROS 2 CLI calls
+- runtime feedback files for command result and robot state
+
+This release does not package vLLM, the robot-side ROS 2 controller, or the robot/sensor stream source. Those remain external dependencies.
 
 ## Managed Services
 
@@ -20,14 +36,14 @@ The launcher writes logs to:
 
 ## External Dependencies
 
-These are still external dependencies in Stage 3A:
+These are still external dependencies in Stage 3:
 
-- robot-side ROS2 controller
+- robot-side ROS 2 controller
 - robot/sensor stream source
 - vLLM or another OpenAI-compatible VLM backend
 - Docker images used by `PuppyPiAdapter`, such as `ros:humble` and `puppy-ros2-cli:humble`
 
-This keeps Stage 3A focused on developer runtime orchestration without hiding hardware or inference setup problems.
+This keeps Stage 3 focused on developer runtime orchestration without hiding hardware or inference setup problems.
 
 ## Install live-vlm-webui Observability UI
 
@@ -76,7 +92,7 @@ python3 -m pip install -e ui
 
 ## Build the Custom ROS 2 CLI Docker Image
 
-The PuppyPi adapter uses two ROS2 CLI Docker images:
+The PuppyPi adapter uses two ROS 2 CLI Docker images:
 
 ```text
 ROS_SVC_IMAGE=ros:humble
@@ -121,6 +137,101 @@ docker run -it --rm puppy-ros2-cli:humble bash -lc \
 This custom image is not required for `ROBOT_ADAPTER=mock`.
 
 For PuppyPi `STOP`, `TROT`, and `HOME`, the adapter primarily uses `ros:humble` service calls. For PuppyPi `MOVE`, the adapter uses `ROS_PUB_IMAGE`, which defaults to `puppy-ros2-cli:humble`.
+
+### Refresh ROS 2 Docker Images
+
+Before validating a physical robot release, refresh the base ROS 2 image on the DGX/control machine. This avoids debugging against stale ROS 2 packages when the robot-side controller image has already been updated.
+
+```bash
+docker pull ros:humble
+
+docker run -it --rm ros:humble bash -lc \
+"apt-get update && apt-get -y upgrade && apt-cache policy ros-humble-rmw-fastrtps-cpp"
+```
+
+If you maintain a locally versioned ROS 2 CLI image, tag it explicitly and pass the matching image names to OpenPAVE:
+
+```bash
+IMAGE_TAG=puppy-ros2-cli:humble-<release-id> ./scripts/build_puppy_ros2_cli.sh
+
+export ROS_SVC_IMAGE=ros:humble
+export ROS_PUB_IMAGE=puppy-ros2-cli:humble-<release-id>
+```
+
+Make sure the robot-side controller process also references the current local image names if you rebuilt or retagged its containers.
+
+## ROS 2 Middleware Selection
+
+All ROS 2 participants in the physical validation path must use the same domain and the same validated middleware:
+
+```text
+ROS_DOMAIN_ID=<same value on DGX/control side and robot side>
+RMW_IMPLEMENTATION=<same RMW on DGX/control side and robot side>
+```
+
+The default OpenPAVE profile uses:
+
+```text
+ROS_DOMAIN_ID=0
+RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+```
+
+Do not mix middleware settings between the robot-side controller container and the DGX/control-side ROS 2 CLI containers. If you validate a different RMW implementation for your environment, update the robot-side container, the DGX/control-side Docker images, and `configs/puppypi.env` together.
+
+### Known ROS 2 DDS / RMW Issues
+
+The current default validated PuppyPi setup uses Fast DDS:
+
+```text
+RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ros-humble-rmw-fastrtps-cpp=6.2.10-1jammy.20260416.070458
+ros-humble-rmw-cyclonedds-cpp=not installed
+```
+
+This was validated with the `puppy-ros2-cli:humble` image created on:
+
+```text
+2026-05-15T21:49:12.448386125Z
+```
+
+Some environments may still require a different ROS 2 RMW implementation, such as `rmw_cyclonedds_cpp`, to achieve reliable discovery or service calls. This can happen when LAN multicast behavior, Docker host networking, firewall rules, ROS 2 package versions, or robot-side controller image tags differ between machines.
+
+If Fast DDS discovery or service calls are unreliable, check the environment before changing OpenPAVE code:
+
+```bash
+docker image inspect puppy-ros2-cli:humble \
+  --format 'image={{.RepoTags}} id={{.Id}} created={{.Created}}'
+
+docker run --rm puppy-ros2-cli:humble bash -lc \
+"source /opt/ros/humble/setup.bash && \
+ apt-cache policy ros-humble-rmw-fastrtps-cpp ros-humble-rmw-cyclonedds-cpp || true"
+```
+
+On the robot-side controller machine, confirm the running container and image:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+docker inspect <controller-container-name> \
+  --format 'name={{.Name}} image={{.Config.Image}} id={{.Image}} created={{.Created}}'
+```
+
+Then confirm both sides use the same ROS 2 settings:
+
+```bash
+echo "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-unset}"
+echo "RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-unset}"
+```
+
+Only test an alternative RMW after confirming:
+
+- both sides use the same `ROS_DOMAIN_ID`
+- both sides use the same `RMW_IMPLEMENTATION`
+- the selected RMW package is installed in every ROS 2 environment involved in the command path
+- the robot-side controller process references the intended, current Docker image
+- the DGX/control-side `ROS_SVC_IMAGE` and `ROS_PUB_IMAGE` point to the intended images
+
+CycloneDDS is currently treated as an environment-specific workaround, not the default validated OpenPAVE release path.
 
 ## Basic Usage
 
@@ -207,7 +318,10 @@ unset TRANSFORMERS_OFFLINE
 vllm serve llava-hf/llava-v1.6-mistral-7b-hf \
   --host 0.0.0.0 \
   --port 8000 \
-  --dtype auto
+  --dtype float16 \
+  --max-model-len 3072 \
+  --gpu-memory-utilization 0.55 \
+  --enforce-eager
 ```
 
 After the model is cached locally, restart vLLM with:
@@ -343,6 +457,12 @@ PUPPYPI_RESTART_ROS_DAEMON=1
 PUPPYPI_LAUNCH_CMD=ros2 launch puppy_control puppy_control.launch.py
 ```
 
+If your PuppyPi controller container was rebuilt or retagged, make sure `PUPPYPI_CONTAINER` points to the currently validated container name before starting the helper script:
+
+```bash
+PUPPYPI_CONTAINER=<current-controller-container-name> ./scripts/start_puppypi_controller.sh
+```
+
 Start the vLLM backend first, then run the OpenPAVE runtime on the DGX/control side.
 
 From the OpenPAVE repo root:
@@ -374,7 +494,6 @@ For physical robot safety, VLM-driven `TROT` forwarding requires repeated confir
 INTENT_FORWARDING_ENABLED=1
 TROT_CONFIRMATIONS=2
 TROT_CONFIRMATION_WINDOW_MS=1500
-TROT_COOLDOWN_MS=3000
 ```
 
 `STOP` is still forwarded immediately.
@@ -719,6 +838,66 @@ Inspect the latest command result:
 ```bash
 cat .openpave/runtime/vla_command_result.json
 ```
+
+## Release Candidate Validation Checklist
+
+Before tagging a Stage 3 release, validate the following items on the target DGX/control machine:
+
+1. Submodule and UI routes:
+
+```bash
+git submodule update --init --recursive
+python3 -m pip install -e ui
+grep -n 'app.router.add_get("/pave"' ui/src/live_vlm_webui/server.py
+grep -n 'app.router.add_post("/api/pave/infer"' ui/src/live_vlm_webui/server.py
+```
+
+2. Unit tests:
+
+```bash
+python3 -B -m unittest discover
+```
+
+3. Mock runtime and benchmark:
+
+```bash
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+python3 scripts/run_benchmark.py scenarios/mock-intent-stop-trot.json
+python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl \
+  --min-pass-rate 1.0 \
+  --max-avg-latency-ms 1500
+```
+
+4. vLLM endpoint and `/pave` inference path:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/models | head
+curl -i http://127.0.0.1:8090/pave
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8090/pave
+```
+
+Run a text-only inference prompt and confirm that the VLM result panel updates.
+
+5. Physical PuppyPi validation:
+
+```bash
+OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+
+curl -s -X POST http://127.0.0.1:7071/intent \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"STOP"}'
+
+tail -n 80 .openpave/logs/control_daemon.log
+cat .openpave/runtime/vla_command_result.json
+cat .openpave/runtime/vla_robot_state.json
+```
+
+Only run `TROT` validation after confirming that the robot-side controller, ROS 2 middleware, and Docker image versions match the tested setup.
 
 ## Stop
 
