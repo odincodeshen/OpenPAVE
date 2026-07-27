@@ -77,17 +77,19 @@ Responsibilities:
 - expose command result and robot state feedback
 - run benchmark scenarios
 
+Brain-side hardware is not limited to DGX. DGX, Thor, and future targets share the Armv9 architecture family.
+
 Current validation:
 
-- DGX
+- DGX (Armv9 Grace CPU + Nvidia GPU)
 - vLLM
 - `llava-hf/llava-v1.6-mistral-7b-hf`
 - OpenPAVE `/pave` console through the `ui/` submodule
 
-Future targets:
+Future targets (Armv9 family):
 
 - Thor
-- other Arm-based edge inference/control nodes
+- other Armv9-based edge inference/control nodes
 - local VLM serving stacks compatible with OpenAI-style APIs
 - future GPU/NPU/VPU inference runtimes
 

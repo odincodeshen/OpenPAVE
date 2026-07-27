@@ -18,10 +18,13 @@ The first validated target is:
 PuppyPi + DGX
 ```
 
+Brain-side targets belong to the Armv9 platform family. DGX (Armv9 Grace CPU + Nvidia GPU) is the first validated representative; Thor and other Armv9 edge nodes are follow-on targets in the same family, not alternatives outside DGX.
+
 Planned future validation targets include:
 
 - SO-101 robot arm with camera + DGX
 - Raspberry Pi ROS 2 car/camera + DGX or Thor
+- Additional Armv9 brain-side platforms (Thor, other Armv9 edge inference/control nodes)
 - Future robot/sensor endpoints using different ROS 2 communication patterns
 
 ## Current Baseline: Validated Baseline v1.0
@@ -156,6 +159,7 @@ The current `PuppyPiAdapter` uses Dockerized one-shot ROS 2 CLI calls. This is e
 - [ ] Add a Raspberry Pi ROS 2 car/camera + DGX/Thor target plan.
 - [ ] Extend the adapter contract for target-specific capabilities beyond `STOP`, `TROT`, `HOME`, and `MOVE`.
 - [ ] Add target metadata to scenarios and benchmark outputs.
+- [ ] Document the Armv9 platform family positioning (DGX, Thor, future Armv9 edge nodes) across `docs/architecture.md` and `docs/arm-physical-ai-ref-workflow.md`.
 
 ### Sensor and VLA Input Path
 

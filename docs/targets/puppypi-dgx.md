@@ -13,6 +13,8 @@ PuppyPi ROS 2 endpoint
 
 This target validates the OpenPAVE workflow. It is not the project boundary.
 
+The brain side here is DGX, the first validated representative of the Armv9 brain-side platform family. Target documents for other Armv9 brain-side platforms (such as Thor) will reuse this same template.
+
 ## Target Roles
 
 ### Body Side
@@ -25,7 +27,7 @@ This target validates the OpenPAVE workflow. It is not the project boundary.
 
 ### Brain Side
 
-- Hardware: DGX/control machine
+- Hardware: DGX/control machine (Armv9 Grace CPU + Nvidia GPU)
 - Inference backend: vLLM or another OpenAI-compatible VLM API
 - UI/runtime: OpenPAVE `/pave` console through the `ui/` submodule
 - Runtime services: Intent Ingress, Control Daemon, Robot Adapter, benchmark harness

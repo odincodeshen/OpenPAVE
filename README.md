@@ -33,6 +33,8 @@ PuppyPi + DGX
 
 PuppyPi + DGX is a validated target, not the project boundary. Planned future targets include SO-101 robot arm + camera + DGX, Raspberry Pi ROS 2 car/camera + DGX or Thor, and additional robot/sensor endpoints with different ROS 2 communication patterns.
 
+OpenPAVE targets the Armv9 brain-side platform family (DGX today; Thor and other Armv9 edge nodes planned), not a single vendor or SKU.
+
 ## Architecture
 
 ```mermaid
@@ -64,7 +66,7 @@ flowchart LR
 
 Current implementation:
 
-- Brain side: DGX running vLLM, OpenPAVE runtime services, and the `/pave` console.
+- Brain side: DGX (Armv9 Grace CPU + Nvidia GPU) running vLLM, OpenPAVE runtime services, and the `/pave` console.
 - Body side: PuppyPi running ROS 2 `puppy_control`.
 - Control path: Intent Ingress -> Control Daemon -> Robot Adapter -> Dockerized ROS 2 CLI.
 - Feedback path: command result and robot state JSON files consumed by the UI and benchmark harness.
