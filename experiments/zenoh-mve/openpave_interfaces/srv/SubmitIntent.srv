@@ -1,0 +1,6 @@
+# OpenPAVE brain->body @rpc: submit one intent, get its command result back.
+# Request: a raw or normalized intent, encoded as JSON (intent schema v0.1).
+string payload
+---
+# Response: the command_result, encoded as JSON.
+string result
