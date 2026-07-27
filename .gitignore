@@ -8,6 +8,8 @@ logs/
 .openpave/
 benchmark-results/
 todo_cn.md
+agent_note.md
+agent_note_cn.md
 docker/
 pw_profile_livevlm/
 ui/live-vlm-webui/.venv/
