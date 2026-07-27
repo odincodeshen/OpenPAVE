@@ -47,15 +47,27 @@ the two zenoh stacks is the most common silent failure.
 
 ### 3. Session mode must be `client` (cross-host)
 
-The default `rmw_zenoh` session config is `mode: "peer"`. **Peer mode does not work
-across hosts here**: peers try to connect to each other *directly* and advertise their
-own locators — with `--net=host` a node advertises `tcp/127.0.0.1:<port>`, which the
-other host cannot reach (`Unable to connect to any locator of scouted peer
-[tcp/127.0.0.1:…]`).
+A zenoh session runs in one of three modes:
 
-Set **every** node to `mode: "client"` so all traffic is relayed **through the router**
-— no direct peer links, no locator advertising. On each node, copy the default session
-config and edit it before launching:
+| mode | role | reaches others via |
+|------|------|--------------------|
+| `router` (`zenohd`) | relay daemon; interconnects sessions and other routers | listens on `:7447` |
+| `peer` | full mesh member; discovers peers and connects to them **directly**, advertising its own locators | direct peer-to-peer |
+| `client` | connects **only to a router**; never listens or advertises a locator; all traffic is **relayed through the router** | the router |
+
+**This experiment uses `client` for both nodes.** It is cross-host (DGX ↔ RPi over
+Wi-Fi) with `--net=host`. In `peer` mode (the rmw_zenoh default) each node advertises
+its own locator and tries to connect to the other *directly*; under `--net=host` that
+locator is `tcp/127.0.0.1:<port>`, which the other host cannot reach (`Unable to connect
+to any locator of scouted peer [tcp/127.0.0.1:…]`). In `client` mode neither node
+connects to the other directly — both attach to the router, which relays all pub/sub, so
+the unreachable-address problem disappears and the link works across machines.
+
+> Peer mode is fine when every node is on the same host / subnet with directly reachable
+> addresses. **Across machines, use `client` and let the router relay.**
+
+Set **every** node to `mode: "client"`. On each node, copy the default session config and
+edit it before launching:
 
 ```bash
 cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5
