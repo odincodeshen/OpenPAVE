@@ -227,3 +227,48 @@ docker stop openpave-brain             # -> body logs FAIL-SAFE STOP within ~2 s
 docker rm -f openpave-router openpave-brain   # DGX cleanup
 docker rm -f openpave-body                     # RPi cleanup
 ```
+
+### E1b — `@rpc` request/reply variant (2026-07-28)
+
+Same router, same `client`-mode config; the intent path is a ROS 2 **service**
+(`openpave_interfaces/srv/SubmitIntent`) instead of two topics. Each container builds
+the interface package once (`colcon build`, ~8 s) before launching the node. Validated
+round-trip: steady-state **~5–6 ms** (first call ~38 ms for service discovery warm-up).
+
+**Body service — RPi** (build interface → serve `/openpave/submit_intent`):
+
+```bash
+docker run -d --name openpave-body-rpc --net=host \
+  -e RMW_IMPLEMENTATION=rmw_zenoh_cpp -e ROS_DOMAIN_ID=0 -v ~/OpenPAVE:/ws \
+  --shm-size=640m --ulimit memlock=-1:-1 --cap-add NET_ADMIN --security-opt seccomp=unconfined \
+  --entrypoint bash odinlmshen/ros2-zenoh-arm:jazzy-edge \
+  -lc 'source /opt/ros/jazzy/setup.bash \
+    && mkdir -p /tmp/ws/src && cp -r /ws/experiments/zenoh-mve/openpave_interfaces /tmp/ws/src/ \
+    && cd /tmp/ws && colcon build --packages-select openpave_interfaces \
+    && source /tmp/ws/install/setup.bash \
+    && cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5 \
+    && sed -i "s#tcp/localhost:7447#tcp/<DGX-IP>:7447#g" /tmp/sess.json5 \
+    && sed -i "s/mode: \"peer\"/mode: \"client\"/" /tmp/sess.json5 \
+    && export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5 \
+    && exec python3 /ws/experiments/zenoh-mve/body_rpc.py'
+```
+
+**Brain client — DGX** (build interface → call the sequence, then exits):
+
+```bash
+docker run -d --name openpave-brain-rpc --net=host \
+  -e RMW_IMPLEMENTATION=rmw_zenoh_cpp -e ROS_DOMAIN_ID=0 -v ~/openpave-zenoh:/ws \
+  --shm-size=640m --ulimit memlock=-1:-1 \
+  --entrypoint bash odinlmshen/ros2-zenoh-arm:jazzy-edge \
+  -lc 'source /opt/ros/jazzy/setup.bash \
+    && mkdir -p /tmp/ws/src && cp -r /ws/experiments/zenoh-mve/openpave_interfaces /tmp/ws/src/ \
+    && cd /tmp/ws && colcon build --packages-select openpave_interfaces \
+    && source /tmp/ws/install/setup.bash \
+    && cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5 \
+    && sed -i "s/mode: \"peer\"/mode: \"client\"/" /tmp/sess.json5 \
+    && export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5 \
+    && exec python3 /ws/experiments/zenoh-mve/brain_rpc.py'
+
+docker logs openpave-brain-rpc         # -> INTENT <- completed round-trip N ms, then SUMMARY
+docker rm -f openpave-body-rpc openpave-brain-rpc   # cleanup (RPi / DGX)
+```

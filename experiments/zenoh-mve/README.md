@@ -15,13 +15,30 @@ RPi ── dummy body node (MockAdapter) — no puppy_control
 
 ## Pieces
 
+Two variants of the brain→body path, both mock, both validated on DGX + RPi:
+
+**E1a — pub/sub topics** (correlated by `request_id`):
+
 | File | Host | Role |
 |------|------|------|
 | `body_node.py` | RPi | sub `/openpave/intent` → MockAdapter → pub `/openpave/robot_state`; heartbeat watchdog → STOP stub |
 | `brain_probe.py` | DGX | pub intents + 1 Hz heartbeat; sub state; measures round-trip latency |
 
-Both reuse the validated repo modules unchanged (`pave_runtime.intent_schema`,
+**E1b — `@rpc` request/reply** (ROS 2 service; the result returns on the same call):
+
+| File | Host | Role |
+|------|------|------|
+| `openpave_interfaces/` | both | tiny ROS interface pkg — `srv/SubmitIntent.srv` (`string payload` → `string result`) |
+| `body_rpc.py` | RPi | serves `/openpave/submit_intent` → MockAdapter → replies with `command_result` JSON |
+| `brain_rpc.py` | DGX | calls the service for each intent; measures request/reply round-trip |
+
+All reuse the validated repo modules unchanged (`pave_runtime.intent_schema`,
 `control_daemon.feedback`, `control_daemon.adapters`).
+
+> **Validated** on DGX ↔ RPi over Wi-Fi (2026-07-28):
+> E1a round-trip avg **9.9 ms**; E1b `@rpc` steady-state **~5–6 ms** (first call ~38 ms
+> for service discovery warm-up). Request/reply is a single hop — faster and simpler than
+> correlated pub/sub. See [zenoh_test.md](zenoh_test.md) for the exact container commands.
 
 ## Prerequisites
 
@@ -77,5 +94,5 @@ python3 experiments/zenoh-mve/brain_probe.py
 
 ## Not in scope (deliberately)
 
-Request/reply (`@rpc`) services, custom ROS messages, real robot motion, and the
-neutral device-connect binding. Those come after this transport path is green.
+Real robot motion and the neutral device-connect binding — those come later.
+(E1b already covers request/reply `@rpc` via a small custom ROS service.)
