@@ -185,6 +185,41 @@ docker rm -f openpave-body-rpc openpave-brain-rpc   # RPi / DGX
 
 ---
 
+## E2 — multi-node fan-out (validated)
+
+One router relays to N bodies: the same intent reaches **every** body, and every body
+self-protects if the brain link drops. Validated 2026-07-28 with two RPis (`.12`, `.13`)
+plus the DGX router/brain.
+
+Reuses `body_node.py` unchanged — each body just gets a **unique node name** at launch via
+a ROS remap (no code change): append `--ros-args -r __node:=openpave_body_N` to the
+`python3 … body_node.py` call in the E1a **Body** command, and run it on each host:
+
+```bash
+# RPi-A (192.168.0.12): ...body_node.py --ros-args -r __node:=openpave_body_1
+# RPi-B (192.168.0.13): ...body_node.py --ros-args -r __node:=openpave_body_2
+```
+
+Then start the E1a **brain** on the DGX as usual.
+
+**Verify fan-out:**
+
+- Each body log shows all four intents with the **same** `req=…` ids — one intent reached
+  both bodies (downlink fan-out):
+
+  ```bash
+  # on each RPi
+  docker logs openpave-body | grep "intent "
+  ```
+
+- Brain `SUMMARY` shows 4/4 round-trips (it records the first reply per id).
+- `docker stop openpave-brain` → **both** body logs show `FAIL-SAFE STOP` within ~2 s —
+  each body self-protects independently.
+
+**Cleanup:** `docker rm -f openpave-body` on each RPi; `docker rm -f openpave-brain openpave-router` on the DGX.
+
+---
+
 ## Troubleshooting: nodes don't exchange
 
 Almost always a node's zenoh session is not reaching the router. Check in order:
@@ -217,3 +252,8 @@ E1b (`@rpc`):
 
 - [x] **request/reply** — each service call returns its `command_result` on the same call
 - [x] **latency** — steady-state ~5–6 ms round-trip (first call ~38 ms, service warm-up)
+
+E2 (multi-node, 2 RPis + DGX):
+
+- [x] **fan-out** — one intent reaches every body (matching `req` ids)
+- [x] **fail-safe fan-out** — brain loss makes every body STOP independently (~2.1 s)

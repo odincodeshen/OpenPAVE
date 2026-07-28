@@ -46,12 +46,12 @@ All reuse the validated repo modules unchanged (`pave_runtime.intent_schema`,
 |-------|------|--------|
 | **E1a** | brain↔body transport, pub/sub topics (mock, no motion) | ✅ validated 2026-07-27 · avg 9.9 ms |
 | **E1b** | request/reply `@rpc` via ROS service (mock, no motion) | ✅ validated 2026-07-28 · ~5–6 ms |
-| E2 | multi-node fan-out — one router, many bodies | planned |
+| **E2** | multi-node fan-out — one router, many bodies (mock) | ✅ validated 2026-07-28 · 2 RPis |
 | E2 | real `PuppyPiAdapter` — drives the physical robot | planned |
 | — | neutral device-connect binding at the seam | later |
 
-E1 (the transport layer) is proven end-to-end on real DGX + RPi hardware — mock only,
-zero robot motion. Next up is E2.
+E1 (transport) and multi-node fan-out are proven end-to-end on real hardware — mock only,
+zero robot motion. Next up: the real adapter.
 
 ## How to run
 
