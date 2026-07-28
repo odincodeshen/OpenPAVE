@@ -13,6 +13,7 @@ form: the brain gets its result synchronously on the call it made.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -40,7 +41,8 @@ SERVICE = "/openpave/submit_intent"
 class BodyRpc(Node):
     def __init__(self) -> None:
         super().__init__("openpave_body_rpc")
-        self.adapter = create_robot_adapter("mock")
+        # safe default: mock. Set ROBOT_ADAPTER=puppypi to drive the real robot.
+        self.adapter = create_robot_adapter(os.environ.get("ROBOT_ADAPTER", "mock"))
         self.srv = self.create_service(SubmitIntent, SERVICE, self.on_submit)
         self.get_logger().info(
             f"body @rpc up · adapter={self.adapter.name} · serving {SERVICE}"

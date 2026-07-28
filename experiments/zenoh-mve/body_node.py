@@ -14,6 +14,7 @@ adapter for ``ROBOT_ADAPTER=puppypi``.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -44,7 +45,8 @@ HEARTBEAT_TIMEOUT_SEC = 2.0
 class BodyNode(Node):
     def __init__(self) -> None:
         super().__init__("openpave_body_mock")
-        self.adapter = create_robot_adapter("mock")
+        # safe default: mock. Set ROBOT_ADAPTER=puppypi to drive the real robot.
+        self.adapter = create_robot_adapter(os.environ.get("ROBOT_ADAPTER", "mock"))
 
         self.state_pub = self.create_publisher(String, STATE_TOPIC, 10)
         self.create_subscription(String, INTENT_TOPIC, self.on_intent, 10)
