@@ -62,7 +62,14 @@ class RosCliConfig:
     def from_env(cls) -> "RosCliConfig":
         return cls(
             ros_domain_id=os.environ.get("ROS_DOMAIN_ID", "0"),
-            rmw_implementation=os.environ.get("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp"),
+            # PUPPY_RMW_IMPLEMENTATION lets the adapter's ROS 2 CLI use a different RMW than
+            # the host process — e.g. when the brain-body seam runs on rmw_zenoh but
+            # puppy_control speaks FastDDS. Falls back to RMW_IMPLEMENTATION, then the
+            # FastDDS default, so existing single-RMW deployments are unchanged.
+            rmw_implementation=os.environ.get(
+                "PUPPY_RMW_IMPLEMENTATION",
+                os.environ.get("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp"),
+            ),
             ros_svc_image=os.environ.get("ROS_SVC_IMAGE", "ros:humble"),
             ros_pub_image=os.environ.get("ROS_PUB_IMAGE", "puppy-ros2-cli:humble"),
         )
