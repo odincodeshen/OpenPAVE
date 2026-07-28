@@ -15,6 +15,20 @@ The project is not an LLM serving framework like vLLM or Ollama. It is a referen
 - observability UI
 - benchmark scenarios
 
+## Demo
+
+Recorded runs of the OpenPAVE brain-body workflow, by project version:
+
+- **v0.9 — Real-time VLA on DGX Spark: RPi quadruped with LLaVA-7B** — [watch](https://youtu.be/kRiXri0te0g?si=iOhW0d2SSSP6zT4V)
+  Early end-to-end proof of concept: an LLaVA-7B vision-language model on a DGX Spark drives
+  an RPi-based quadruped (PuppyPi) in real time — the brain-side inference → body-side motion
+  loop that OpenPAVE later formalized into normalized intent, robot adapters, and feedback.
+
+- **v1.3 — Stage 3 runtime** — [watch](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
+  A short from the v1.3 (Stage 3) iteration — the runtime that hardened into Validated
+  Baseline v1.0: the intent ingress → control daemon → PuppyPi adapter control path with the
+  `/pave` console and command/state feedback.
+
 ## Validated Baseline v1.0
 
 The current repository is organized around:
