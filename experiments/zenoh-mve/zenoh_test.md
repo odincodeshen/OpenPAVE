@@ -1,49 +1,35 @@
 # zenoh MVE — Hardware Bring-Up Runbook
 
-Step-by-step to run the brain ↔ body transport smoke test on real hosts
-(DGX = brain, RPi = body). Each step has a **checkpoint** so a failure is easy to
-localize as either *transport* or *application*.
-
-See [README.md](README.md) for the design; this file is the operational guide.
+Operational guide to run the brain ↔ body transport test on real hosts
+(DGX = brain, RPi = body), in containers. See [README.md](README.md) for the design
+and the validation plan/status.
 
 **Goal:** DGX sends an intent → RPi receives it → RPi returns state → DGX measures
-round-trip. Fail-safe fires when the heartbeat stops. **No robot motion.**
+round-trip; fail-safe fires when the link goes quiet. **No robot motion** (mock adapter).
 
-> **✅ Validated 2026-07-27** on DGX (`spark`, 192.168.0.24) ↔ RPi (`pi5`, 192.168.0.12)
-> over Wi-Fi, both running `odinlmshen/ros2-zenoh-arm:jazzy-edge`. All checks a–e pass;
-> round-trip **avg 9.9 ms** (8.9–10.4). See [Validated container commands](#validated-container-commands-2026-07-27).
->
-> **Key finding:** for cross-host, every node's zenoh session **must be `mode: "client"`,
-> not the default `mode: "peer"`.** See [Pre-flight #3](#3-session-mode-must-be-client-cross-host).
+> **✅ Validated** on DGX (`spark`, 192.168.0.24) ↔ RPi (`pi5`, 192.168.0.12) over Wi-Fi,
+> both on `odinlmshen/ros2-zenoh-arm:jazzy-edge`.
+> **E1a** (pub/sub) 2026-07-27 — checks a–e pass, round-trip avg **9.9 ms**.
+> **E1b** (`@rpc`) 2026-07-28 — request/reply, steady-state **~5–6 ms**.
+
+Everything runs in containers named `openpave-*` (additive, easy to remove). Replace
+`<DGX-IP>` with the DGX LAN IP (e.g. `192.168.0.24`).
 
 ---
 
-## Pre-flight (before running anything)
+## Pre-flight
 
-### 1. RPi must have the repo
+### 1. Both hosts have the repo
 
-`body_node.py` imports `pave_runtime` and `control_daemon` (it locates the repo
-root via `parents[2]`). So the repo must be present inside the RPi's ROS 2
-container — `git clone` the `feat/brain-body-zenoh` branch or mount the repo in.
+`body_node.py` / `body_rpc.py` import `pave_runtime` and `control_daemon` (they locate the
+repo root via `parents[2]`), so the repo must be cloned on each host and mounted into the
+container at `/ws`. In the validated runs: RPi `~/OpenPAVE`, DGX `~/openpave-zenoh`.
 
-> `brain_probe.py` has no repo imports (only `rclpy`), so the DGX side needs just
-> the script plus ROS 2.
+### 2. Identical environment
 
-### 2. Identical environment on both hosts
-
-```bash
-export RMW_IMPLEMENTATION=rmw_zenoh_cpp
-export ROS_DOMAIN_ID=0
-```
-
-Confirm rmw_zenoh is installed:
-
-```bash
-ros2 pkg list | grep rmw_zenoh
-```
-
-Use the **same `ros2-zenoh-arm` image tag on both hosts** — version skew between
-the two zenoh stacks is the most common silent failure.
+Use the **same `ros2-zenoh-arm` image tag on both hosts** — version skew between the two
+zenoh stacks is the most common silent failure. The container commands below set
+`RMW_IMPLEMENTATION=rmw_zenoh_cpp` and `ROS_DOMAIN_ID=0`.
 
 ### 3. Session mode must be `client` (cross-host)
 
@@ -55,132 +41,28 @@ A zenoh session runs in one of three modes:
 | `peer` | full mesh member; discovers peers and connects to them **directly**, advertising its own locators | direct peer-to-peer |
 | `client` | connects **only to a router**; never listens or advertises a locator; all traffic is **relayed through the router** | the router |
 
-**This experiment uses `client` for both nodes.** It is cross-host (DGX ↔ RPi over
-Wi-Fi) with `--net=host`. In `peer` mode (the rmw_zenoh default) each node advertises
-its own locator and tries to connect to the other *directly*; under `--net=host` that
-locator is `tcp/127.0.0.1:<port>`, which the other host cannot reach (`Unable to connect
-to any locator of scouted peer [tcp/127.0.0.1:…]`). In `client` mode neither node
-connects to the other directly — both attach to the router, which relays all pub/sub, so
-the unreachable-address problem disappears and the link works across machines.
+**Both nodes use `client`.** This is cross-host (DGX ↔ RPi over Wi-Fi) with `--net=host`.
+In `peer` mode (the rmw_zenoh default) each node advertises its own locator and tries to
+connect to the other *directly*; under `--net=host` that locator is `tcp/127.0.0.1:<port>`,
+which the other host cannot reach (`Unable to connect to any locator of scouted peer
+[tcp/127.0.0.1:…]`). In `client` mode neither node connects to the other directly — both
+attach to the router, which relays all traffic, so the unreachable-address problem
+disappears and the link works across machines.
 
 > Peer mode is fine when every node is on the same host / subnet with directly reachable
 > addresses. **Across machines, use `client` and let the router relay.**
 
-Set **every** node to `mode: "client"`. On each node, copy the default session config and
-edit it before launching:
-
-```bash
-cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/sess.json5
-sed -i 's/mode: "peer"/mode: "client"/' /tmp/sess.json5
-# body only: point the connect endpoint at the router on the DGX
-sed -i 's#tcp/localhost:7447#tcp/<DGX-IP>:7447#g' /tmp/sess.json5
-export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5
-```
-
-The brain shares the router's host, so it keeps the default `tcp/localhost:7447` endpoint
-and only needs the `mode` change.
+The run commands below already apply this (they `sed` the copied session config to
+`mode: "client"` and point the body's connect endpoint at the DGX router).
 
 ---
 
-## Run steps
+## E1a — pub/sub topics (validated)
 
-### Step 1 — Router (exactly one)
+Intent on `/openpave/intent`, state on `/openpave/robot_state`, heartbeat on
+`/openpave/heartbeat`; the brain correlates replies by `request_id`.
 
-If you already have a running `ros2-zenoh-arm` central router, **reuse it** and
-point both hosts at it — do not start a second one. Otherwise start it on the DGX:
-
-```bash
-ros2 run rmw_zenoh_cpp rmw_zenohd
-```
-
-Make sure port `7447` on the DGX is not blocked by a firewall.
-
-### Step 2 — Body node (on the RPi)
-
-```bash
-python3 experiments/zenoh-mve/body_node.py
-```
-
-**Checkpoint:** logs `body node up · adapter=mock · listening /openpave/intent`.
-
-### Step 3 — Discovery check (on the DGX, before the probe)
-
-```bash
-ros2 node list
-```
-
-**Checkpoint (a. discovery):**
-- ✅ `/openpave_body_mock` appears → zenoh crosses hosts. Continue.
-- ❌ only local nodes → **stop here.** Transport is not connected — see
-  [Troubleshooting](#troubleshooting-step-3-discovery-fails).
-
-### Step 4 — Brain probe (on the DGX)
-
-```bash
-python3 experiments/zenoh-mve/brain_probe.py
-```
-
-**Checkpoint (b / c / d):**
-- Probe logs `-> sent STOP/TROT/MOVE/HOME` then `<- completed … round-trip N ms`.
-- Body logs each `intent … req=…` and the mock action.
-- Probe prints a `SUMMARY` line (avg/min/max round-trip) once all four reply.
-
-### Step 5 — Fail-safe test (e)
-
-Ctrl-C the probe (or kill the router). Within ~2 s the body logs:
-
-```
-heartbeat lost -> FAIL-SAFE STOP (stub)
-```
-
----
-
-## Troubleshooting: Step 3 discovery fails
-
-Almost always the RPi's zenoh session is not reaching the DGX router. Check in order:
-
-0. **Node still in peer mode** (most common) — if a body log shows `Unable to connect to
-   any locator of scouted peer [tcp/127.0.0.1:…]`, the node is `mode: "peer"`. Switch it to
-   `mode: "client"` per [Pre-flight #3](#3-session-mode-must-be-client-cross-host).
-1. **Connect endpoint** — the RPi client must point at `tcp/<DGX-IP>:7447`. Reuse
-   the client config you already validated in `ros2-zenoh-arm`; the DGX is just
-   one more client alongside the RPi.
-2. **Reachability** — from the RPi:
-
-   ```bash
-   nc -vz <DGX-IP> 7447
-   ```
-
-3. **Version match** — both hosts on the same rmw_zenoh / image tag.
-4. **Same env for CLI tools** — `ros2 node list` is itself a zenoh session; run it
-   with the same `RMW_IMPLEMENTATION` and `ROS_DOMAIN_ID`.
-
-## If you get stuck, capture this
-
-- Which step, and the full terminal output at that point
-- `ros2 node list` and `ros2 topic list` from **both** hosts
-- How the RPi is configured to reach the router (where the endpoint is set, and its value)
-- Output of `nc -vz <DGX-IP> 7447` from the RPi
-
----
-
-## Validation checklist
-
-- [x] **a. discovery** — both nodes visible across hosts (validated 2026-07-27)
-- [x] **b. downlink** — DGX intent logged by the body on the RPi
-- [x] **c. uplink** — body state received by the probe on the DGX
-- [x] **d. latency** — round-trip avg 9.9 ms (8.9–10.4) over Wi-Fi
-- [x] **e. fail-safe** — heartbeat loss makes the body log the STOP stub (~2.4 s)
-
----
-
-## Validated container commands (2026-07-27)
-
-The runbook above is native-shell oriented; this is the exact **containerized** flow that
-passed, using `odinlmshen/ros2-zenoh-arm:jazzy-edge`. Containers are named `openpave-*`
-(additive, easy to remove). Replace `<DGX-IP>` with the DGX's LAN IP (e.g. 192.168.0.24).
-
-**Router — DGX:**
+**1. Router — DGX:**
 
 ```bash
 docker run -d --name openpave-router --net=host \
@@ -189,7 +71,7 @@ docker run -d --name openpave-router --net=host \
   -lc 'source /opt/ros/jazzy/setup.bash && exec ros2 run rmw_zenoh_cpp rmw_zenohd'
 ```
 
-**Body — RPi** (repo cloned at `~/OpenPAVE`; `mode: client` + endpoint → DGX):
+**2. Body — RPi** (repo at `~/OpenPAVE`; `client` mode + endpoint → DGX):
 
 ```bash
 docker run -d --name openpave-body --net=host \
@@ -204,7 +86,9 @@ docker run -d --name openpave-body --net=host \
     && exec python3 /ws/experiments/zenoh-mve/body_node.py'
 ```
 
-**Brain — DGX** (repo cloned at `~/openpave-zenoh`; `mode: client`, local router):
+Checkpoint: `docker logs openpave-body` → `body node up · adapter=mock · listening /openpave/intent`.
+
+**3. Brain — DGX** (repo at `~/openpave-zenoh`; `client` mode, local router):
 
 ```bash
 docker run -d --name openpave-brain --net=host \
@@ -218,22 +102,36 @@ docker run -d --name openpave-brain --net=host \
     && exec python3 /ws/experiments/zenoh-mve/brain_probe.py'
 ```
 
-**Watch / test / clean up:**
+**Verify a–e:**
 
 ```bash
-docker logs -f openpave-brain          # DGX: sent / completed / SUMMARY
-docker logs -f openpave-body           # RPi: intents received
-docker stop openpave-brain             # -> body logs FAIL-SAFE STOP within ~2 s
-docker rm -f openpave-router openpave-brain   # DGX cleanup
-docker rm -f openpave-body                     # RPi cleanup
+docker logs -f openpave-brain    # (c/d) <- completed … round-trip N ms, then SUMMARY
+docker logs -f openpave-body     # (b)   intent STOP/TROT/MOVE/HOME req=…
+docker stop openpave-brain       # (e)   body logs FAIL-SAFE STOP within ~2 s
 ```
 
-### E1b — `@rpc` request/reply variant (2026-07-28)
+- **a. discovery** — proven implicitly once b/c succeed (the two nodes found each other via
+  the router); check explicitly with `docker exec openpave-body bash -lc "source /opt/ros/jazzy/setup.bash && ros2 node list"`.
+- **b. downlink** — body log shows each `intent … req=…`.
+- **c. uplink** — brain log shows `<- completed req=…`.
+- **d. latency** — brain `SUMMARY` line (avg/min/max round-trip).
+- **e. fail-safe** — stopping the brain (heartbeat stops) makes the body log the STOP stub.
 
-Same router, same `client`-mode config; the intent path is a ROS 2 **service**
-(`openpave_interfaces/srv/SubmitIntent`) instead of two topics. Each container builds
-the interface package once (`colcon build`, ~8 s) before launching the node. Validated
-round-trip: steady-state **~5–6 ms** (first call ~38 ms for service discovery warm-up).
+**Cleanup:**
+
+```bash
+docker rm -f openpave-router openpave-brain   # DGX
+docker rm -f openpave-body                     # RPi
+```
+
+---
+
+## E1b — `@rpc` request/reply (validated)
+
+Same router + `client` config; the intent path is a ROS 2 **service**
+(`openpave_interfaces/srv/SubmitIntent`) instead of two topics, so the result returns on
+the same call. Each container builds the interface package once (`colcon build`, ~8 s)
+before launching the node. (Reuse the E1a router, or start it the same way.)
 
 **Body service — RPi** (build interface → serve `/openpave/submit_intent`):
 
@@ -253,6 +151,8 @@ docker run -d --name openpave-body-rpc --net=host \
     && exec python3 /ws/experiments/zenoh-mve/body_rpc.py'
 ```
 
+Checkpoint: `docker logs openpave-body-rpc` → `body @rpc up · … · serving /openpave/submit_intent`.
+
 **Brain client — DGX** (build interface → call the sequence, then exits):
 
 ```bash
@@ -268,7 +168,52 @@ docker run -d --name openpave-brain-rpc --net=host \
     && sed -i "s/mode: \"peer\"/mode: \"client\"/" /tmp/sess.json5 \
     && export ZENOH_SESSION_CONFIG_URI=/tmp/sess.json5 \
     && exec python3 /ws/experiments/zenoh-mve/brain_rpc.py'
-
-docker logs openpave-brain-rpc         # -> INTENT <- completed round-trip N ms, then SUMMARY
-docker rm -f openpave-body-rpc openpave-brain-rpc   # cleanup (RPi / DGX)
 ```
+
+**Verify:**
+
+```bash
+docker logs openpave-brain-rpc   # -> INTENT <- completed round-trip N ms, then SUMMARY
+docker logs openpave-body-rpc    # @rpc intent STOP/TROT/MOVE/HOME req=…
+```
+
+**Cleanup:**
+
+```bash
+docker rm -f openpave-body-rpc openpave-brain-rpc   # RPi / DGX
+```
+
+---
+
+## Troubleshooting: nodes don't exchange
+
+Almost always a node's zenoh session is not reaching the router. Check in order:
+
+0. **Node still in peer mode** (most common) — a body log showing `Unable to connect to any
+   locator of scouted peer [tcp/127.0.0.1:…]` means the node is `mode: "peer"`. Switch it to
+   `client` per [Pre-flight #3](#3-session-mode-must-be-client-cross-host).
+1. **Connect endpoint** — the body's session must point at `tcp/<DGX-IP>:7447`.
+2. **Reachability** — from the RPi: `nc -vz <DGX-IP> 7447`.
+3. **Version match** — both hosts on the same rmw_zenoh / image tag.
+4. **Same env for CLI tools** — `ros2 node list` is itself a zenoh session; run it inside a
+   container with the same `RMW_IMPLEMENTATION`, `ROS_DOMAIN_ID`, and session config.
+
+**If you get stuck, capture:** which step + full output; `ros2 node list` / `ros2 topic list`
+from both hosts; how the body is configured to reach the router; `nc -vz <DGX-IP> 7447`.
+
+---
+
+## Validation checklist
+
+E1a (pub/sub):
+
+- [x] **a. discovery** — both nodes visible across hosts (2026-07-27)
+- [x] **b. downlink** — DGX intent logged by the body on the RPi
+- [x] **c. uplink** — body state received by the probe on the DGX
+- [x] **d. latency** — round-trip avg 9.9 ms (8.9–10.4) over Wi-Fi
+- [x] **e. fail-safe** — heartbeat loss makes the body log the STOP stub (~2.4 s)
+
+E1b (`@rpc`):
+
+- [x] **request/reply** — each service call returns its `command_result` on the same call
+- [x] **latency** — steady-state ~5–6 ms round-trip (first call ~38 ms, service warm-up)

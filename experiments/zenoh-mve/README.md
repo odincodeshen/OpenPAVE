@@ -40,57 +40,29 @@ All reuse the validated repo modules unchanged (`pave_runtime.intent_schema`,
 > for service discovery warm-up). Request/reply is a single hop — faster and simpler than
 > correlated pub/sub. See [zenoh_test.md](zenoh_test.md) for the exact container commands.
 
-## Prerequisites
+## Validation plan & status
 
-- ROS 2 Jazzy with **`rmw_zenoh`** on both hosts. Use the **same image tag** on
-  both (e.g. the `ros2-zenoh-arm` `jazzy-*` ARM64 images) to avoid version skew.
-- On both hosts:
+| stage | what | status |
+|-------|------|--------|
+| **E1a** | brain↔body transport, pub/sub topics (mock, no motion) | ✅ validated 2026-07-27 · avg 9.9 ms |
+| **E1b** | request/reply `@rpc` via ROS service (mock, no motion) | ✅ validated 2026-07-28 · ~5–6 ms |
+| E2 | multi-node fan-out — one router, many bodies | planned |
+| E2 | real `PuppyPiAdapter` — drives the physical robot | planned |
+| — | neutral device-connect binding at the seam | later |
 
-```bash
-export RMW_IMPLEMENTATION=rmw_zenoh_cpp
-export ROS_DOMAIN_ID=0
-```
+E1 (the transport layer) is proven end-to-end on real DGX + RPi hardware — mock only,
+zero robot motion. Next up is E2.
 
-- One **zenoh router** reachable by both hosts. Run it on the DGX and point the
-  RPi's zenoh session at it (`tcp/<DGX-IP>:7447`). Reuse the router / connect
-  config you already validated in `ros2-zenoh-arm`; the only change here is
-  adding the DGX as one more client next to the RPi.
+## How to run
 
-## Run
+Everything runs in containers on the two hosts. See the **[hardware runbook](zenoh_test.md)**
+for the exact, validated `docker run` commands (E1a and E1b), the pre-flight, and the
+`client`-mode requirement — plus the a–e checklist.
 
-**1. Router — on the DGX:**
-
-```bash
-ros2 run rmw_zenoh_cpp rmw_zenohd
-```
-
-**2. Body node — on the RPi (inside the ROS 2 docker):**
-
-```bash
-python3 experiments/zenoh-mve/body_node.py
-```
-
-**3. Brain probe — on the DGX:**
-
-```bash
-python3 experiments/zenoh-mve/brain_probe.py
-```
-
-## What you should see
-
-- Probe logs `-> sent STOP/TROT/MOVE/HOME` and then `<- completed … round-trip N ms`.
-- Body logs each `intent … req=…` and the mock action.
-- Probe prints a `SUMMARY` line with avg/min/max round-trip once all four reply.
-
-## Validation checklist
-
-- [ ] **a. discovery** — `ros2 node list` on either host shows both
-      `openpave_brain_probe` and `openpave_body_mock`
-- [ ] **b. downlink** — an intent sent on DGX is logged by the body on the RPi
-- [ ] **c. uplink** — the body's state is received by the probe on the DGX
-- [ ] **d. latency** — the probe reports a round-trip time per request
-- [ ] **e. fail-safe** — Ctrl-C the probe (or kill the router); within ~2 s the
-      body logs `heartbeat lost -> FAIL-SAFE STOP (stub)`
+At a glance: one `rmw_zenohd` **router** on the DGX (`:7447`), then a **body** container on
+the RPi and a **brain** container on the DGX, both as zenoh `client`s. Same
+`ros2-zenoh-arm` image tag on both hosts; `RMW_IMPLEMENTATION=rmw_zenoh_cpp`,
+`ROS_DOMAIN_ID=0`.
 
 ## Not in scope (deliberately)
 
