@@ -11,7 +11,7 @@ OpenPAVE documentation is organized around the current validated baseline, reusa
 ## Architecture and Positioning
 
 - [Architecture](architecture.md): current brain-side, body-side, runtime, feedback, and benchmark roles.
-- [Brain-Body Architecture](architecture-brain-body.md): latest high-level brain/body split and transport architecture diagram.
+- [Brain-Body Architecture](architecture-brain-body.md): latest high-level brain/body split, transport diagram, and glossary for intent, RPC, state, and the control contract.
 - [Arm Physical AI Reference Workflow](arm-physical-ai-ref-workflow.md): non-official Arm/Linux ecosystem reference perspective.
 
 ## Runtime Contracts
