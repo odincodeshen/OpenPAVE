@@ -24,6 +24,7 @@ from pave_runtime.capability_schema import (
     CapabilityIntentError,
     normalize_action_payload,
 )
+from pave_runtime.intent_schema import intent_to_capability_action, normalize_intent_payload
 
 
 def _puppy(runner):
@@ -122,6 +123,37 @@ class LocomotionCapabilityTests(unittest.TestCase):
         adapter = create_robot_adapter("mock")
         self.assertIsInstance(adapter, CapabilityAdapter)
         self.assertIn("stop", adapter.capabilities)
+
+
+class IntentTranslatorTests(unittest.TestCase):
+    """Legacy locomotion intent (v0.1) -> capability action translation (the compat layer)."""
+
+    def test_simple_verbs_map_without_params(self):
+        for intent, action in (("STOP", "stop"), ("TROT", "trot"), ("HOME", "home")):
+            req = intent_to_capability_action({"intent": intent})
+            self.assertEqual(req["action"], action)
+            self.assertEqual(req["params"], {})
+
+    def test_move_carries_velocity_params(self):
+        normalized = normalize_intent_payload(
+            {"intent": "MOVE", "vx": 0.0, "yaw": 0.6, "duration_ms": 600}
+        )
+        req = intent_to_capability_action(normalized)
+        self.assertEqual(req["action"], "move")
+        self.assertEqual(req["params"]["yaw"], 0.6)
+        self.assertEqual(req["params"]["duration_ms"], 600)
+
+    def test_translated_action_is_supported_by_locomotion_adapter(self):
+        # end-to-end contract: every legacy intent translates to a capability the
+        # locomotion adapter declares (so generic dispatch never rejects a valid intent)
+        adapter = MockAdapter()
+        for intent in ("STOP", "TROT", "HOME", "MOVE"):
+            req = intent_to_capability_action(normalize_intent_payload({"intent": intent}))
+            self.assertIn(req["action"], adapter.capabilities)
+
+    def test_unknown_intent_falls_back_to_stop(self):
+        req = intent_to_capability_action({"intent": "FLIP"})
+        self.assertEqual(req["action"], "stop")
 
 
 if __name__ == "__main__":

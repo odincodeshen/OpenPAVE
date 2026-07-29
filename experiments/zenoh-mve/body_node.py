@@ -30,10 +30,11 @@ if str(ROOT) not in sys.path:
 
 from pave_runtime.intent_schema import (
     IntentValidationError,
+    intent_to_capability_action,
     normalize_intent_payload,
     now_iso,
 )
-from control_daemon.adapters import create_robot_adapter
+from control_daemon.adapters import AdapterActionResult, create_robot_adapter
 from control_daemon.feedback import command_result, robot_state
 
 INTENT_TOPIC = "/openpave/intent"
@@ -116,7 +117,6 @@ class BodyNode(Node):
             return
 
         intent = normalized["intent"]
-        params = normalized.get("params", {})
         self.get_logger().info(f"intent {intent} req={normalized['request_id']}")
 
         started = now_iso()
@@ -129,18 +129,15 @@ class BodyNode(Node):
             )
         )
 
-        if intent == "TROT":
-            result = self.adapter.trot()
-        elif intent == "HOME":
-            result = self.adapter.home()
-        elif intent == "MOVE":
-            result = self.adapter.move(
-                vx=float(params.get("vx", 0.0)),
-                yaw=float(params.get("yaw", 0.0)),
-                duration_ms=int(params.get("duration_ms", 500)),
+        # translate the legacy intent to a capability action, then dispatch generically
+        action_req = intent_to_capability_action(normalized)
+        action = action_req["action"]
+        if action not in self.adapter.capabilities:
+            result = AdapterActionResult.failed(
+                f"{self.adapter.name} does not support '{action}'"
             )
         else:
-            result = self.adapter.stop()
+            result = self.adapter.execute(action, action_req["params"])
 
         self._publish(
             command_result(

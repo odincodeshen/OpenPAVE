@@ -176,3 +176,22 @@ def intent_action_key(intent: dict[str, Any]) -> tuple[Any, ...]:
         params.get("yaw"),
         params.get("duration_ms"),
     )
+
+
+# Translator: legacy locomotion intent (v0.1) -> capability {action, params}. This keeps
+# existing file-bus / intent-ingress payloads working while the dispatch runs on the graduated
+# capability model (see pave_runtime.capability_schema). Locomotion is one capability vocabulary;
+# other robot classes speak their own actions natively.
+_INTENT_TO_ACTION = {"STOP": "stop", "TROT": "trot", "HOME": "home", "MOVE": "move"}
+
+
+def intent_to_capability_action(normalized: dict[str, Any]) -> dict[str, Any]:
+    """Map a normalized v0.1 intent onto a capability action.
+
+    ``STOP/TROT/HOME -> stop/trot/home`` (no params); ``MOVE -> move`` carrying vx/yaw/duration_ms.
+    Unknown intents fall back to the safe ``stop``.
+    """
+    intent = str(normalized.get("intent", "STOP")).upper()
+    action = _INTENT_TO_ACTION.get(intent, "stop")
+    params = dict(normalized.get("params") or {}) if action == "move" else {}
+    return {"action": action, "params": params}
