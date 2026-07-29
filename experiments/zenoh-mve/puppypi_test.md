@@ -55,6 +55,10 @@ UDP — is unchanged and still correct for that deployment.)
 
 ## Step 1 — `puppy_control` on the PuppyPi (leave it running)
 
+**Shortcut:** on the PuppyPi, run **`scripts/start_puppy_control.sh`** — it starts the container,
+ensures a single instance, launches puppy_control **detached**, and verifies it responds. The
+manual steps below are what it automates.
+
 `ros2 launch` is a **foreground** process — **do not ctrl-c it** (SIGINT kills puppy_control).
 Launch it detached and use a separate shell for anything else:
 
