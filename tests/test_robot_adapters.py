@@ -142,8 +142,50 @@ class RobotAdapterTests(unittest.TestCase):
         for cmd in commands:
             self.assertIn("docker exec", cmd)
             self.assertIn("puppypi_ros2", cmd)
+            self.assertIn("timeout", cmd)  # hung call fails fast, doesn't block the body
             self.assertNotIn("docker run", cmd)
         self.assertIn("/puppy_control/go_home", commands[2])
+
+    def test_puppypi_local_stop_escalates_to_hard_stop(self):
+        commands = []
+
+        def runner(cmd):
+            commands.append(cmd)
+            # motion-stop service calls time out (as when the gait loop starves the callback);
+            # the hard-stop (pkill) succeeds.
+            if "set_mark_time" in cmd or "set_running" in cmd:
+                return 124
+            return 0
+
+        adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner)
+
+        with patch("control_daemon.adapters.time.sleep"), contextlib.redirect_stdout(io.StringIO()):
+            result = adapter.stop()
+
+        joined = " ".join(commands)
+        self.assertIn("pkill", joined)              # escalated to hard-stop
+        self.assertNotIn("go_home", joined)         # graceful posture skipped on escalation
+        self.assertTrue(result.success)             # robot stopped via hard-stop
+        self.assertEqual(result.steps[-1]["name"], "hard_stop:kill_gait")
+
+    def test_puppypi_local_trot_settles_between_calls(self):
+        commands = []
+
+        def runner(cmd):
+            commands.append(cmd)
+            return 0
+
+        adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner)
+
+        with patch("control_daemon.adapters.time.sleep") as sleep_mock, contextlib.redirect_stdout(io.StringIO()):
+            result = adapter.trot()
+
+        self.assertTrue(result.success)
+        self.assertEqual(len(commands), 2)
+        self.assertIn("/puppy_control/set_running", commands[0])
+        self.assertIn("{data: true}", commands[0])
+        self.assertIn("/puppy_control/set_mark_time", commands[1])
+        sleep_mock.assert_called()  # settle delay applied between the two calls
 
     def test_puppypi_local_move_velocity_via_exec(self):
         commands = []

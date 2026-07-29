@@ -123,9 +123,41 @@ Go one rung at a time; only advance after the previous is clean:
 1. **STOP** ✅ — `set_mark_time:false` → `set_running:false` → `go_home`. Robot returns to its
    home/rest posture; **no locomotion**.
 2. **HOME** — `go_home` only.
-3. **TROT** ✅ — mark-time / in-place stepping. **Continuous** — it keeps stepping until you send
-   `STOP` (there is no auto-stop and no heartbeat, so the watchdog stays dormant).
+3. **TROT** ✅ — mark-time / in-place stepping. **Continuous** — it keeps stepping until stopped.
+   ⚠️ **`STOP` via service call is unreliable *while trotting*** (see Safety below) — have the
+   hardware E-STOP and the emergency hard-stop ready **before** you trot.
 4. **MOVE** — actual locomotion. **Last.** Small `vx`/`yaw`, short `duration_ms`, ready to STOP.
+
+## ⚠️ Safety — `STOP` does NOT reliably stop a *moving* robot
+
+**Learned the hard way (2026-07-29):** while the robot was trotting, **every `STOP` via service
+call hung** — the chain STOP, and even a direct same-container `set_mark_time:false`. The robot
+kept trotting; the only thing that stopped it was **killing puppy_control**.
+
+**Root cause:** puppy_control's service callbacks are **starved while the gait loop runs**
+(single-threaded executor). Idle → services respond instantly; trotting → the busy control loop
+never services the stop request. So the high-level `STOP` is least reliable exactly when the
+robot is moving — the opposite of what a safety-stop needs.
+
+**Never rely on the software `STOP` alone. Layered stop:**
+
+1. **Hardware E-STOP** (kill switch / power) — always in reach; the real safety net.
+2. **Emergency hard-stop** (software, guaranteed) — kill the gait loop directly:
+   ```bash
+   ssh pi@<PuppyPi-IP> 'docker exec puppypi_ros2 bash -lc "pkill -9 -f puppy_control/lib"'
+   ```
+   Stepping stops immediately; then relaunch puppy_control (Step 1) to regain control.
+3. **Adapter timeout + auto-escalation** (implemented) — `PuppyPiLocalAdapter.stop()` runs the
+   motion-stopping calls with a short timeout (`PUPPY_STOP_TIMEOUT_SEC`, default 3s); if they fail
+   (starved callback), it **automatically escalates to the hard-stop** (kills the gait) so the
+   robot stops even when the graceful STOP can't get through. Every call is also `timeout`-capped
+   (`PUPPY_CALL_TIMEOUT_SEC`, default 10s) so a hang never freezes the body.
+
+   > After an escalated hard-stop, puppy_control is dead — **relaunch it (Step 1)** to regain control.
+
+**Still TODO (robot-side):** puppy_control needs a multi-threaded executor / high-priority stop
+(Hiwonder code) so the *graceful* STOP works while moving. The hardware E-STOP remains the
+primary safety net regardless.
 
 ## Key findings
 
@@ -134,10 +166,12 @@ Go one rung at a time; only advance after the previous is clean:
 - **Don't ctrl-c the `ros2 launch`** — SIGINT kills puppy_control. Launch detached.
 - **RMW split**: seam = `rmw_zenoh_cpp`; puppy hop = `rmw_fastrtps_cpp` (via
   `PUPPY_RMW_IMPLEMENTATION`). One process loads one RMW, hence the separate exec.
-- **Reliability caveat**: each adapter call does fresh FastDDS discovery, which can be slow or
-  occasionally hang; the body's `on_intent` is synchronous, so a hung call blocks it. Future
-  robustness: add a **timeout** to the adapter's calls, and/or move to a **persistent robot
-  bridge** (see [docs/further-work.md](../../docs/further-work.md)) instead of per-call CLI.
+- **TROT from rest**: `set_running:true` then `set_mark_time:true` back-to-back can leave the
+  robot not stepping; `PuppyPiLocalAdapter.trot()` adds a settle delay (`PUPPY_TROT_SETTLE_SEC`).
+- **Reliability**: each adapter call does fresh FastDDS discovery, which can be slow or hang, and
+  the body's `on_intent` is synchronous. Each call is now `timeout`-capped so a hang fails fast
+  (see Safety). A **persistent robot bridge** (see [docs/further-work.md](../../docs/further-work.md))
+  would replace per-call CLI entirely.
 
 ## Cleanup / rollback
 
