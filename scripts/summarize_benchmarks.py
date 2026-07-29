@@ -91,8 +91,12 @@ def summarize_group(records: list[dict[str, Any]]) -> dict[str, Any]:
 def summarize_records(records: list[dict[str, Any]], group_by: list[str]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for key, group in sorted(group_records(records, group_by).items()):
+        # keep zip(strict=True)'s guarantee without the 3.10+ kwarg (deploy targets run
+        # 3.12, but the tests run on 3.9): the key must line up with the requested fields.
+        if len(key) != len(group_by):
+            raise ValueError(f"group key {key!r} does not match group_by {group_by!r}")
         row = {
-            "group": dict(zip(group_by, key, strict=True)),
+            "group": dict(zip(group_by, key)),
             "summary": summarize_group(group),
         }
         rows.append(row)

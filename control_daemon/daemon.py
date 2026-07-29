@@ -42,6 +42,8 @@ Notes
   builds may require gait/pose/velocity pipelines instead of velocity_move.x.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys
@@ -55,10 +57,11 @@ if str(ROOT) not in sys.path:
 from pave_runtime.intent_schema import (
     IntentValidationError,
     intent_action_key,
+    intent_to_capability_action,
     normalize_intent_payload,
     now_iso,
 )
-from control_daemon.adapters import create_robot_adapter
+from control_daemon.adapters import AdapterActionResult, create_robot_adapter
 from control_daemon.feedback import atomic_write_json, command_result, robot_state
 
 INTENT_PATH = os.environ.get("INTENT_PATH", "/tmp/vla_intent.json")
@@ -111,19 +114,16 @@ def execute_intent(normalized: dict, adapter):
     write_robot_state("executing", adapter.name, executing)
 
     try:
-        intent = normalized["intent"]
-        if intent == "TROT":
-            adapter_result = adapter.trot()
-        elif intent == "HOME":
-            adapter_result = adapter.home()
-        elif intent == "MOVE":
-            params = normalized.get("params", {})
-            vx = float(params.get("vx", 0.0))
-            yaw = float(params.get("yaw", 0.0))
-            duration_ms = int(params.get("duration_ms", 500))
-            adapter_result = adapter.move(vx=vx, yaw=yaw, duration_ms=duration_ms)
+        # translate the legacy intent to a capability action, then dispatch generically:
+        # the adapter runs it only if it declares the capability.
+        action_req = intent_to_capability_action(normalized)
+        action, params = action_req["action"], action_req["params"]
+        if action not in adapter.capabilities:
+            adapter_result = AdapterActionResult.failed(
+                f"{adapter.name} does not support '{action}'"
+            )
         else:
-            adapter_result = adapter.stop()
+            adapter_result = adapter.execute(action, params)
     except Exception as exc:
         failed = command_result(
             intent=normalized,

@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-from dataclasses import dataclass
-from typing import Callable, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from pave_runtime.intent_schema import now_iso
 
@@ -19,22 +19,51 @@ class AdapterActionResult:
     success: bool
     steps: list[dict[str, object]]
     error: str | None = None
+    # optional payload for capabilities that *return data* rather than act (e.g. a sensor's
+    # frame metadata). Actuators leave it empty; the control/data-plane split keeps large
+    # payloads (an image) out of here — see CameraSensorAdapter.
+    detail: dict[str, object] = field(default_factory=dict)
 
     @classmethod
-    def ok(cls, steps: list[dict[str, object]] | None = None) -> "AdapterActionResult":
-        return cls(success=True, steps=steps or [])
+    def ok(
+        cls,
+        steps: list[dict[str, object]] | None = None,
+        detail: dict[str, object] | None = None,
+    ) -> "AdapterActionResult":
+        return cls(success=True, steps=steps or [], detail=detail or {})
 
     @classmethod
     def failed(
         cls,
         error: str,
         steps: list[dict[str, object]] | None = None,
+        detail: dict[str, object] | None = None,
     ) -> "AdapterActionResult":
-        return cls(success=False, steps=steps or [], error=error)
+        return cls(success=False, steps=steps or [], error=error, detail=detail or {})
+
+
+@runtime_checkable
+class CapabilityAdapter(Protocol):
+    """Capability-declarative robot interface — the canonical contract.
+
+    An adapter declares which actions it supports (``capabilities``) and executes any of them
+    (``execute``). The generic dispatch routes an action to the adapter only if the adapter
+    declares it, so a new robot class is a new adapter and nothing else changes.
+    """
+
+    name: str
+    capabilities: frozenset[str]
+
+    def execute(self, action: str, params: dict[str, Any]) -> AdapterActionResult:
+        """Run one declared action with its params."""
 
 
 class RobotAdapter(Protocol):
-    """Common robot capability interface consumed by the control daemon."""
+    """Legacy locomotion interface (stop/trot/home/move).
+
+    Retained for the locomotion adapters and their tests; the capability layer
+    (``LocomotionCapabilityMixin``) exposes these verbs as a ``CapabilityAdapter``.
+    """
 
     name: str
 
@@ -49,6 +78,37 @@ class RobotAdapter(Protocol):
 
     def move(self, vx: float, yaw: float, duration_ms: int) -> AdapterActionResult:
         """Run a short velocity-style movement command."""
+
+
+class LocomotionCapabilityMixin:
+    """Capability layer over the locomotion verbs (stop/trot/home/move).
+
+    Exposes the capability-declarative interface (``capabilities`` + ``execute``) on top of a
+    class's ``stop()/trot()/home()/move()`` methods, so a locomotion robot is just another
+    ``CapabilityAdapter`` — the transport and generic dispatch stay robot-agnostic. ``estop``
+    maps to ``stop`` (which, on ``PuppyPiLocalAdapter``, escalates to a hard-stop when the
+    graceful stop times out).
+    """
+
+    # common safe verbs + locomotion class-specific verbs
+    capabilities = frozenset({"stop", "estop", "home", "trot", "move"})
+
+    def execute(self, action: str, params: dict[str, Any] | None = None) -> AdapterActionResult:
+        params = params or {}
+        if action in ("stop", "estop"):
+            return self.stop()
+        if action == "home":
+            return self.home()
+        if action == "trot":
+            return self.trot()
+        if action == "move":
+            return self.move(
+                vx=float(params.get("vx", 0.0)),
+                yaw=float(params.get("yaw", 0.0)),
+                duration_ms=int(params.get("duration_ms", 500)),
+            )
+        # generic dispatch checks capabilities first, so this is defensive only
+        return AdapterActionResult.failed(f"unsupported action: {action}")
 
 
 @dataclass(frozen=True)
@@ -79,7 +139,7 @@ def default_runner(cmd: str) -> int:
     return subprocess.run(cmd, shell=True).returncode
 
 
-class PuppyPiAdapter:
+class PuppyPiAdapter(LocomotionCapabilityMixin):
     """PuppyPi robot adapter backed by Dockerized ROS2 CLI calls."""
 
     name = "puppypi"
@@ -345,7 +405,7 @@ class PuppyPiLocalAdapter(PuppyPiAdapter):
         return self._result([mark, running, home])
 
 
-class MockAdapter:
+class MockAdapter(LocomotionCapabilityMixin):
     """Dry-run adapter for local development without robot hardware."""
 
     name = "mock"
@@ -367,7 +427,33 @@ class MockAdapter:
         return AdapterActionResult.ok([{"name": "mock_move", "return_code": 0}])
 
 
-def create_robot_adapter(name: str | None = None) -> RobotAdapter:
+class MockArmAdapter:
+    """Manipulation-class mock adapter (graduated from experiments/capability-mve).
+
+    Proves the capability model spans a *different robot class* (an arm) over the same seam and
+    dispatch with only a new adapter + capability set. It declares manipulation capabilities
+    (not locomotion) and logs each action; no hardware. Swap for a real arm adapter later — the
+    transport and dispatch do not change.
+    """
+
+    name = "mock_arm"
+    # manipulation capabilities + the common safe verbs (stop/estop/home)
+    capabilities = frozenset({"estop", "stop", "home", "grasp", "release", "move_joint"})
+    # per-capability required params (the adapter's own contract; absent = no params required)
+    _required: dict[str, tuple[str, ...]] = {"move_joint": ("joint", "position")}
+
+    def execute(self, action: str, params: dict[str, Any] | None = None) -> AdapterActionResult:
+        params = params or {}
+        missing = [k for k in self._required.get(action, ()) if k not in params]
+        if missing:
+            return AdapterActionResult.failed(
+                f"'{action}' requires params {missing}", detail={"action": action}
+            )
+        print(f"[{now_iso()}] [mock_arm] {action} params={params}")
+        return AdapterActionResult.ok(detail={"action": action, "params": params})
+
+
+def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
     adapter_name = (name or os.environ.get("ROBOT_ADAPTER", "puppypi")).strip().lower()
 
     if adapter_name in {"mock", "dry-run", "dry_run"}:
@@ -376,5 +462,18 @@ def create_robot_adapter(name: str | None = None) -> RobotAdapter:
         return PuppyPiAdapter()
     if adapter_name in {"puppypi_local", "puppypi-local"}:
         return PuppyPiLocalAdapter()
+    if adapter_name in {"mock_arm", "mock-arm"}:
+        return MockArmAdapter()
+    # camera adapters are lazy-imported: control_daemon.camera_adapter pulls in OpenCV only when
+    # a frame is actually grabbed, and this keeps adapters.py free of that dependency at import.
+    if adapter_name in {"camera_mock", "camera-mock", "camera"}:
+        from control_daemon.camera_adapter import CameraSensorAdapter, MockCameraSource
+
+        return CameraSensorAdapter(MockCameraSource(), name="camera_mock")
+    if adapter_name in {"camera_usb", "camera-usb"}:
+        from control_daemon.camera_adapter import CameraSensorAdapter, UsbCameraSource
+
+        device = os.environ.get("CAMERA_DEVICE", "/dev/video0")
+        return CameraSensorAdapter(UsbCameraSource(device), name="camera_usb")
 
     raise ValueError(f"unsupported ROBOT_ADAPTER: {adapter_name}")
