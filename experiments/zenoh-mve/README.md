@@ -2,6 +2,10 @@
 
 Minimal viable experiment for the OpenPAVE brain–body seam over zenoh.
 
+> **Scope:** this is experimental validation — it is **not** wired into the main OpenPAVE
+> runtime, which still uses the file bus (`intent_ingress` + `control_daemon`). Graduating this
+> into the runtime (replacing the file bus with zenoh) is separate future work.
+
 **Goal:** prove the DGX (brain) can send an intent to the RPi (body) and receive
 state back over one zenoh fabric — **with zero robot motion.** The body node runs
 every intent through the existing `MockAdapter`, so only the transport is new.
