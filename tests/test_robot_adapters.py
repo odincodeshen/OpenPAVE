@@ -1,6 +1,9 @@
+import base64
 import contextlib
 import io
+import json
 import os
+import re
 import unittest
 from unittest.mock import patch
 
@@ -20,6 +23,40 @@ def _puppy_config() -> RosCliConfig:
         ros_svc_image="ros:humble",
         ros_pub_image="puppy-ros2-cli:humble",
     )
+
+
+def _decode_steps(cmd: str) -> list[dict]:
+    """Pull the base64 step list back out of a gait-runner docker-exec command."""
+    match = re.search(r"python3 - ([A-Za-z0-9+/=]+)", cmd)
+    assert match, f"no base64 steps payload in: {cmd}"
+    return json.loads(base64.b64decode(match.group(1)).decode())["steps"]
+
+
+def _fake_capture(fail_services: tuple[str, ...] = ()):
+    """A capture-runner stand-in for PuppyPiLocalAdapter._run_gait.
+
+    Records each call and returns a runner-shaped JSON result derived from the decoded steps,
+    marking any service whose path contains an entry in ``fail_services`` as timed out (rc 124).
+    """
+    calls: list[dict] = []
+
+    def cap(cmd: str, stdin_text: str):
+        steps = _decode_steps(cmd)
+        calls.append({"cmd": cmd, "stdin": stdin_text, "steps": steps})
+        results = []
+        for step in steps:
+            op = step.get("op")
+            if op == "service":
+                rc = 124 if any(f in step["service"] for f in fail_services) else 0
+                results.append({"name": f"service:{step['service']}", "rc": rc})
+            elif op == "velocity":
+                results.append({"name": "velocity_move", "rc": 0})
+            elif op == "sleep":
+                results.append({"name": "sleep", "rc": 0})
+        overall = 0 if all(r["rc"] == 0 for r in results) else 1
+        return overall, json.dumps({"steps": results})
+
+    return cap, calls
 
 
 class RobotAdapterTests(unittest.TestCase):
@@ -124,86 +161,81 @@ class RobotAdapterTests(unittest.TestCase):
         self.assertIsInstance(adapter, PuppyPiLocalAdapter)
         self.assertEqual(adapter.name, "puppypi_local")
 
-    def test_puppypi_local_stop_uses_docker_exec(self):
-        commands = []
+    # ---- opt A: batched gait runner (one docker exec per action) ----------------------------
+    def test_puppypi_local_stop_batches_motion_then_go_home(self):
+        cap, calls = _fake_capture()
+        adapter = PuppyPiLocalAdapter(config=_puppy_config(), capture_runner=cap)
 
-        def runner(cmd):
-            commands.append(cmd)
-            return 0
-
-        with patch.dict(os.environ, {"PUPPY_EXEC_CONTAINER": "puppypi_ros2"}):
-            adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner)
-
-        with patch("control_daemon.adapters.time.sleep"), contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
             result = adapter.stop()
 
         self.assertTrue(result.success)
-        self.assertEqual(len(commands), 3)
-        for cmd in commands:
-            self.assertIn("docker exec", cmd)
-            self.assertIn("puppypi_ros2", cmd)
-            self.assertIn("timeout", cmd)  # hung call fails fast, doesn't block the body
-            self.assertNotIn("docker run", cmd)
-        self.assertIn("/puppy_control/go_home", commands[2])
+        # success path = 2 execs: motion-stop (both calls in ONE exec), then go_home
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            [s["service"] for s in calls[0]["steps"]],
+            ["/puppy_control/set_mark_time", "/puppy_control/set_running"],
+        )
+        self.assertEqual(calls[1]["steps"][0]["service"], "/puppy_control/go_home")
+        for c in calls:
+            self.assertIn("docker exec -i", c["cmd"])
+            self.assertIn("puppypi_ros2", c["cmd"])
+            self.assertNotIn("docker run", c["cmd"])
+            self.assertNotIn("ros2 service call", c["cmd"])  # no per-call CLI anymore
+            self.assertEqual(c["stdin"], adapter._runner_path.read_text())  # runner fed via stdin
 
     def test_puppypi_local_stop_escalates_to_hard_stop(self):
-        commands = []
+        # motion-stop service calls time out (gait loop starves the callback); the pkill succeeds.
+        cap, calls = _fake_capture(fail_services=("set_mark_time", "set_running"))
+        pkills = []
 
-        def runner(cmd):
-            commands.append(cmd)
-            # motion-stop service calls time out (as when the gait loop starves the callback);
-            # the hard-stop (pkill) succeeds.
-            if "set_mark_time" in cmd or "set_running" in cmd:
-                return 124
+        def runner(cmd):  # used only by _hard_stop
+            pkills.append(cmd)
             return 0
 
-        adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner)
+        adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner, capture_runner=cap)
 
-        with patch("control_daemon.adapters.time.sleep"), contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
             result = adapter.stop()
 
-        joined = " ".join(commands)
-        self.assertIn("pkill", joined)              # escalated to hard-stop
-        self.assertNotIn("go_home", joined)         # graceful posture skipped on escalation
-        self.assertTrue(result.success)             # robot stopped via hard-stop
+        self.assertTrue(result.success)  # robot stopped via hard-stop
+        self.assertEqual(len(calls), 1)  # only the motion-stop exec; go_home skipped on escalation
+        self.assertTrue(any("pkill" in c for c in pkills))
         self.assertEqual(result.steps[-1]["name"], "hard_stop:kill_gait")
 
-    def test_puppypi_local_trot_settles_between_calls(self):
-        commands = []
+    def test_puppypi_local_trot_batches_with_settle_step(self):
+        cap, calls = _fake_capture()
+        adapter = PuppyPiLocalAdapter(config=_puppy_config(), capture_runner=cap)
 
-        def runner(cmd):
-            commands.append(cmd)
-            return 0
-
-        adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner)
-
-        with patch("control_daemon.adapters.time.sleep") as sleep_mock, contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
             result = adapter.trot()
 
         self.assertTrue(result.success)
-        self.assertEqual(len(commands), 2)
-        self.assertIn("/puppy_control/set_running", commands[0])
-        self.assertIn("{data: true}", commands[0])
-        self.assertIn("/puppy_control/set_mark_time", commands[1])
-        sleep_mock.assert_called()  # settle delay applied between the two calls
+        self.assertEqual(len(calls), 1)  # one exec for the whole trot
+        ops = [(s.get("op"), s.get("service", s.get("sec"))) for s in calls[0]["steps"]]
+        self.assertEqual(
+            ops,
+            [
+                ("service", "/puppy_control/set_running"),
+                ("sleep", adapter.trot_settle_sec),  # settle is a step inside the runner now
+                ("service", "/puppy_control/set_mark_time"),
+            ],
+        )
 
-    def test_puppypi_local_move_velocity_via_exec(self):
-        commands = []
+    def test_puppypi_local_move_velocity_via_gait(self):
+        cap, calls = _fake_capture()
+        adapter = PuppyPiLocalAdapter(config=_puppy_config(), capture_runner=cap)
 
-        def runner(cmd):
-            commands.append(cmd)
-            return 0
-
-        adapter = PuppyPiLocalAdapter(config=_puppy_config(), runner=runner)
-
-        with patch("control_daemon.adapters.time.sleep"), contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
             result = adapter.move(vx=0.0, yaw=0.6, duration_ms=600)
 
         self.assertTrue(result.success)
+        self.assertEqual(len(calls), 1)  # one exec for the whole move
+        velocity = [s for s in calls[0]["steps"] if s.get("op") == "velocity"]
+        self.assertEqual(len(velocity), 1)
+        self.assertEqual(velocity[0]["x"], 0.0)
+        self.assertEqual(velocity[0]["yaw_rate"], 0.6)
         self.assertEqual(result.steps[-1]["name"], "velocity_move")
-        self.assertIn("docker exec", commands[-1])
-        self.assertIn("puppy_control_msgs/msg/Velocity", commands[-1])
-        self.assertIn("{x: 0.0, y: 0.0, yaw_rate: 0.6}", commands[-1])
 
     def test_mock_adapter_returns_success_result(self):
         adapter = MockAdapter()
