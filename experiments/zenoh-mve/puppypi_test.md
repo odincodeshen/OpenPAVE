@@ -1,94 +1,94 @@
 # PuppyPi real-adapter run — DGX brain → real PuppyPi over zenoh
 
-> ⚠️ **This drives a REAL robot.** Follow the safety ladder in Step 5 — send `STOP`/`HOME`
-> and confirm the path before any locomotion. Keep the robot in a clear area with a hand on
-> the kill switch.
+> ⚠️ **This drives a REAL robot.** Send `STOP`/`HOME`/`TROT` before any locomotion. Keep the
+> robot in a clear area with a hand on the kill switch.
 
-Extends the [zenoh MVE](README.md): the **same brain↔body zenoh seam** as E1a, but the
-body runs the real `PuppyPiAdapter` (not the mock), which commands `puppy_control` on the
-PuppyPi. Only the adapter changes; the transport is unchanged.
+Extends the [zenoh MVE](README.md): the **same brain↔body zenoh seam** as E1a, but the body
+runs the real `PuppyPiLocalAdapter`, which commands `puppy_control` on the PuppyPi. Only the
+adapter changes; the transport is unchanged.
+
+> **✅ Validated 2026-07-29** on DGX (`192.168.0.24`, brain+router) ↔ PuppyPi (`192.168.0.12`,
+> body+puppy_control). `STOP` (→ go_home) and `TROT` (→ mark-time stepping) drove the real
+> servos end-to-end over zenoh. See [Key findings](#key-findings).
 
 ## Architecture — two independent hops
 
 ```
 DGX (brain) ──zenoh · Jazzy · rmw_zenoh──▶ body node (on the PuppyPi)
-                                              │  PuppyPiAdapter
-                                              ▼  docker run ros:humble / puppy-ros2-cli
+                                              │  PuppyPiLocalAdapter
+                                              ▼  docker exec puppypi_ros2  (same container)
                                            puppy_control (Humble · FastDDS, LOCAL)
                                               ▼
                                            servos / motion  (real)
 ```
 
 - **Seam** (brain↔body): zenoh, `client` mode, via the router on the DGX — as validated in E1.
-- **Body-internal** (body→robot): `PuppyPiAdapter` shells out to Dockerized ROS 2 Humble CLI
-  (`/puppy_control/set_running`, `go_home`, `velocity_move`, …). This hop is FastDDS and stays
-  **local to the PuppyPi**. The two hops use different RMWs and do not interfere.
+- **Body-internal** (body→robot): `PuppyPiLocalAdapter` runs the ROS 2 CLI **inside** the
+  `puppypi_ros2` container (via `docker exec`), where puppy_control lives. This keeps FastDDS
+  same-container (shared-memory works) and reuses its workspace (`puppy_control_msgs` for
+  velocity_move). The two hops use different RMWs and do not interfere.
+
+Why `docker exec`, not `docker run`: puppy_control's FastDDS uses **shared memory** for
+same-host transport, and SHM lives in the container's IPC namespace. A separate `docker run`
+container has its own IPC namespace → discovery works but responses over SHM never arrive →
+the call hangs. `docker exec` into `puppypi_ros2` shares its namespace, so it works. (The
+original `PuppyPiAdapter` — `docker run`, for a *remote* control host reaching the robot over
+UDP — is unchanged and still correct for that deployment.)
 
 ## Roles
 
 | host | runs |
 |------|------|
-| **DGX** | zenoh router + brain (`brain_probe.py` or `brain_rpc.py`) |
-| **PuppyPi** | `puppy_control` (robot controller) **and** the body node with `ROBOT_ADAPTER=puppypi` |
-| RPi5 | optional mock body for mixed fan-out — **add later**, not in the first run |
+| **DGX** (192.168.0.24) | zenoh router + intent sender (`send_intent.py`) |
+| **PuppyPi** (192.168.0.12) | `puppy_control` **and** the body node with `ROBOT_ADAPTER=puppypi_local` |
+| RPi5 | optional mock body for mixed fan-out — later |
 
-## Prerequisites — confirm before running
+## Prerequisites
 
-- [ ] **PuppyPi IP**: `__________`
-- [ ] **`puppy_control` launched** on the PuppyPi (`ros2 launch puppy_control puppy_control.launch.py`)
-- [ ] **Humble images present on the PuppyPi**: `ros:humble` and `puppy-ros2-cli:humble`
-      (build the latter with `scripts/build_puppy_ros2_cli.sh`)
-- [ ] **Body container can reach docker** to spawn the Humble containers — mount the socket
-      (`-v /var/run/docker.sock:/var/run/docker.sock`) and provide the `docker` CLI inside
-      (mount the host binary or install it). *(Deployment detail to confirm on the PuppyPi.)*
-- [ ] **Safe area** ready; kill switch reachable.
+- [x] Body/adapter code selects adapter from `ROBOT_ADAPTER` (default `mock`); real robot only
+      when `ROBOT_ADAPTER=puppypi_local`.
+- [ ] `puppy_control` running on the PuppyPi (single instance; see Step 1 — **don't ctrl-c** it).
+- [ ] `ros:humble` image on the PuppyPi (only this — the exec reuses the container's workspace,
+      so `puppy-ros2-cli:humble` is **not** needed).
+- [ ] Body container can reach docker: `-v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker`.
+- [ ] Safe area; kill switch reachable.
 
-## Step 1 — Code: adapter selection (done)
+## Step 1 — `puppy_control` on the PuppyPi (leave it running)
 
-`body_node.py` / `body_rpc.py` now pick the adapter from the `ROBOT_ADAPTER` env var, default
-`mock`:
-
-```python
-self.adapter = create_robot_adapter(os.environ.get("ROBOT_ADAPTER", "mock"))
-```
-
-So the real robot is driven **only** when `ROBOT_ADAPTER=puppypi` is set explicitly.
-
-## Step 2 — Robot side: launch `puppy_control` (on the PuppyPi)
+`ros2 launch` is a **foreground** process — **do not ctrl-c it** (SIGINT kills puppy_control).
+Launch it detached and use a separate shell for anything else:
 
 ```bash
-docker start puppypi_ros2
-docker exec -it -u ubuntu -w /home/ubuntu puppypi_ros2 /bin/bash
-# inside:
-export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-source /opt/ros/humble/setup.bash
-source /home/ubuntu/ros2_ws/install/setup.bash
-ros2 launch puppy_control puppy_control.launch.py
+docker exec -d -u ubuntu -w /home/ubuntu puppypi_ros2 bash -lc \
+ 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; \
+  export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp; \
+  ros2 launch puppy_control puppy_control.launch.py'
 ```
 
-**Checkpoint:** `ros2 service list | grep puppy_control` shows `/puppy_control/set_running`,
-`/puppy_control/go_home`, etc.
+**Health check** (same container, should return a response — not hang):
 
-## Step 3 — Body node on the PuppyPi (`ROBOT_ADAPTER=puppypi`)
+```bash
+docker exec -u ubuntu puppypi_ros2 bash -lc \
+ 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; \
+  export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp; \
+  ros2 service call /puppy_control/set_mark_time std_srvs/srv/SetBool "{data: false}"'
+# -> std_srvs.srv.SetBool_Response(success=True, ...)
+```
 
-Runs the zenoh body node (Jazzy/rmw_zenoh for the seam) with the real adapter enabled and
-docker access so `PuppyPiAdapter` can spawn the Humble CLI containers:
+If it hangs: the ros2 daemon may be stale (`ros2 daemon stop`), or puppy_control was
+ctrl-c'd / duplicated — get to a single healthy instance first.
 
-> ⚠️ **Resolve the RMW collision first (needed code tweak).** The body node's own process
-> env must be `RMW_IMPLEMENTATION=rmw_zenoh_cpp` (for the zenoh seam). But
-> `PuppyPiAdapter`'s `RosCliConfig.from_env()` reads the **same** `RMW_IMPLEMENTATION` to set
-> the RMW of the Humble containers it spawns — those need `rmw_fastrtps_cpp` to reach
-> `puppy_control`. One env var cannot be both. Before the real run, make the adapter's RMW
-> independent of the seam — e.g. give `RosCliConfig` a dedicated `PUPPY_RMW_IMPLEMENTATION`
-> that falls back to today's `RMW_IMPLEMENTATION` default, so the existing baseline is
-> unchanged. Small and backward-compatible, but **required** for this deployment.
+## Step 2 — Router on the DGX
+
+Same as E1a (see [zenoh_test.md](zenoh_test.md)): `openpave-router` on the DGX, `:7447`.
+
+## Step 3 — Body node on the PuppyPi (`ROBOT_ADAPTER=puppypi_local`)
 
 ```bash
 docker run -d --name openpave-body --net=host \
   -e RMW_IMPLEMENTATION=rmw_zenoh_cpp -e ROS_DOMAIN_ID=0 \
-  -e ROBOT_ADAPTER=puppypi \
-  -e PUPPY_RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  -e ROBOT_ADAPTER=puppypi_local \
+  -e PUPPY_RMW_IMPLEMENTATION=rmw_fastrtps_cpp -e PUPPY_EXEC_CONTAINER=puppypi_ros2 \
   -v ~/OpenPAVE:/ws \
   -v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker \
   --shm-size=640m --ulimit memlock=-1:-1 --cap-add NET_ADMIN --security-opt seccomp=unconfined \
@@ -101,49 +101,51 @@ docker run -d --name openpave-body --net=host \
     && exec python3 /ws/experiments/zenoh-mve/body_node.py --ros-args -r __node:=openpave_body_puppy'
 ```
 
-Notes:
-- `PUPPY_RMW_IMPLEMENTATION` above assumes the `RosCliConfig` tweak from the warning is in
-  place; without it the adapter would (wrongly) use `rmw_zenoh_cpp` for the Humble containers.
-- `docker.sock` + `docker` CLI let the adapter's `docker run ros:humble …` work from inside
-  the body container. Confirm the mounted `docker` binary runs (`docker version`) — if not,
-  install the CLI in the image or run the body node natively on the PuppyPi.
+**Checkpoint:** `docker logs openpave-body` → `body node up · adapter=puppypi_local · …`.
+(`PuppyPiLocalAdapter` execs into `PUPPY_EXEC_CONTAINER` with `PUPPY_RMW_IMPLEMENTATION` for
+the puppy_control hop; the seam stays on `rmw_zenoh_cpp`.)
 
-**Checkpoint:** `docker logs openpave-body` shows `body node up · adapter=puppypi · …`.
+## Step 4 — Send intents from the DGX (safety ladder)
 
-## Step 4 — Brain on the DGX
+Send one intent at a time with `send_intent.py` (from a zenoh `client` container on the DGX):
 
-Start the router and the brain exactly as in E1a (see [zenoh_test.md](zenoh_test.md) → E1a).
-Keep the intent sequence short for the first real run.
+```bash
+docker run --rm --net=host -e RMW_IMPLEMENTATION=rmw_zenoh_cpp -e ROS_DOMAIN_ID=0 \
+  -v ~/openpave-zenoh:/ws --entrypoint bash odinlmshen/ros2-zenoh-arm:jazzy-edge \
+  -lc 'cp /opt/ros/jazzy/share/rmw_zenoh_cpp/config/DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5 /tmp/s.json5 \
+    && sed -i "s/mode: \"peer\"/mode: \"client\"/" /tmp/s.json5 \
+    && export ZENOH_SESSION_CONFIG_URI=/tmp/s.json5 && source /opt/ros/jazzy/setup.bash \
+    && python3 /ws/experiments/zenoh-mve/send_intent.py STOP'
+```
 
-## Step 5 — Safety ladder (real motion — go slowly)
+Go one rung at a time; only advance after the previous is clean:
 
-Drive one rung at a time; only advance after the previous rung is clean. At any point, send
-`STOP` or stop the brain container (fail-safe) to halt.
+1. **STOP** ✅ — `set_mark_time:false` → `set_running:false` → `go_home`. Robot returns to its
+   home/rest posture; **no locomotion**.
+2. **HOME** — `go_home` only.
+3. **TROT** ✅ — mark-time / in-place stepping. **Continuous** — it keeps stepping until you send
+   `STOP` (there is no auto-stop and no heartbeat, so the watchdog stays dormant).
+4. **MOVE** — actual locomotion. **Last.** Small `vx`/`yaw`, short `duration_ms`, ready to STOP.
 
-1. **STOP** — send `STOP` only. Adapter runs `set_mark_time:false`, `set_running:false`,
-   `go_home`. The robot resets posture; **no locomotion**. Confirm every step's
-   `return_code = 0` in the body log.
-2. **HOME** — `go_home` only. Safe posture reset. Confirms the service path end-to-end.
-3. **TROT** — mark-time / in-place stepping. Watch `TROT_CONFIRMATIONS` (keep = 2). No travel.
-4. **MOVE** — actual locomotion. **Last.** Start with small `vx`/`yaw` and short
-   `duration_ms`, in the safe area, ready to STOP.
+## Key findings
+
+- **Cross-container FastDDS SHM** is why the co-located body needs `PuppyPiLocalAdapter`
+  (`docker exec`), not `docker run`. Same-container call responds; a fresh container hangs.
+- **Don't ctrl-c the `ros2 launch`** — SIGINT kills puppy_control. Launch detached.
+- **RMW split**: seam = `rmw_zenoh_cpp`; puppy hop = `rmw_fastrtps_cpp` (via
+  `PUPPY_RMW_IMPLEMENTATION`). One process loads one RMW, hence the separate exec.
+- **Reliability caveat**: each adapter call does fresh FastDDS discovery, which can be slow or
+  occasionally hang; the body's `on_intent` is synchronous, so a hung call blocks it. Future
+  robustness: add a **timeout** to the adapter's calls, and/or move to a **persistent robot
+  bridge** (see [docs/further-work.md](../../docs/further-work.md)) instead of per-call CLI.
 
 ## Cleanup / rollback
 
 ```bash
 # PuppyPi
-docker rm -f openpave-body          # STOP_ROBOT_ON_EXIT sends a final STOP for puppypi
+docker rm -f openpave-body
 # DGX
-docker rm -f openpave-router openpave-brain
+docker rm -f openpave-router
 ```
 
-`puppy_control` can keep running or be stopped separately.
-
-## Open decisions (confirm with the environment)
-
-- **Where the body node runs.** Target (this doc): **on the PuppyPi** — ROS stays local, only
-  the zenoh seam crosses the network. Alternative (baseline-style): body + adapter on the
-  control side, reaching `puppy_control` over ROS 2/DDS on Wi-Fi. The first is preferred for
-  the brain-body co-computing goal, provided the PuppyPi can run the body container + docker.
-- **docker-in-body vs native.** Socket + CLI mount (above) vs running the body node natively
-  on the PuppyPi. Depends on what the PuppyPi has installed.
+`puppy_control` and the stock containers keep running; nothing else is touched.

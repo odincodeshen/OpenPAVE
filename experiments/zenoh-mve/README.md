@@ -47,11 +47,13 @@ All reuse the validated repo modules unchanged (`pave_runtime.intent_schema`,
 | **E1a** | brain↔body transport, pub/sub topics (mock, no motion) | ✅ validated 2026-07-27 · avg 9.9 ms |
 | **E1b** | request/reply `@rpc` via ROS service (mock, no motion) | ✅ validated 2026-07-28 · ~5–6 ms |
 | **E2** | multi-node fan-out — one router, many bodies (mock) | ✅ validated 2026-07-28 · 2 RPis |
-| E2 | real `PuppyPiAdapter` — drives the physical robot | planned |
+| **E2** | real robot — `PuppyPiLocalAdapter` drives the physical PuppyPi | ✅ validated 2026-07-29 · STOP/TROT |
 | — | neutral device-connect binding at the seam | later |
 
-E1 (transport) and multi-node fan-out are proven end-to-end on real hardware — mock only,
-zero robot motion. Next up: the real adapter.
+E1 (transport) → multi-node → real robot are all proven end-to-end on real hardware. The
+PuppyPi ran STOP (go_home) and TROT (mark-time) driven from the DGX over zenoh, via
+`PuppyPiLocalAdapter` (`docker exec` into the puppy_control container). See
+[puppypi_test.md](puppypi_test.md).
 
 ## How to run
 
