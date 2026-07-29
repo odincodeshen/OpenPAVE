@@ -48,12 +48,22 @@ Same container setup as the zenoh MVE (see `../zenoh-mve/zenoh_test.md`), runnin
 
 ## Validation checklist
 
-- [ ] **discovery** — DGX sees `/openpave_body_arm` (same seam as zenoh MVE)
-- [ ] **capability action** — `send_action.py move_joint '{"joint":2,"position":0.5}'` →
-      body logs `[mock_arm] move_joint params={...}`, state = `completed`
-- [ ] **param check** — `send_action.py move_joint '{"joint":2}'` (no position) → `failed`
-- [ ] **unsupported capability rejected** — `send_action.py trot` → `unsupported` (arm has no trot)
-- [ ] **reuse proven** — transport + deployment identical to zenoh MVE; only the adapter + caps differ
+> **✅ Validated 2026-07-29** on DGX (`192.168.0.24`, router) ↔ plain RPi5 (`192.168.0.13`,
+> `mock_arm` body) over zenoh — same transport as the zenoh MVE, only a new adapter + capability
+> set. The arm body dispatched `move_joint` and **rejected `trot`** (not a declared capability).
+
+- [x] **discovery** — DGX saw `/openpave_body_arm` (same seam as zenoh MVE)
+- [x] **capability action** — `move_joint {"joint":2,"position":0.5}` → body logged
+      `action move_joint params={'joint': 2, 'position': 0.5}` and dispatched to the adapter
+- [x] **param check** — `move_joint {"joint":2}` (no position) → adapter returns `failed`
+- [x] **unsupported capability rejected** — `trot` → `[WARN] unsupported capability: trot (adapter=mock_arm)`
+- [x] **reuse proven** — transport + deployment identical to the zenoh MVE; only the adapter + caps differ
+
+### Reliability observation
+
+The body's `rmw_zenoh` node **does not survive the zenoh router being restarted** — the session
+drops and the node exits (seen as `Exited (255)`). Same trait as the zenoh MVE. Future work: the
+body should reconnect to the router rather than crash (see `docs/further-work.md`).
 
 ## What this proves
 
