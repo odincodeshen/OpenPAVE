@@ -427,7 +427,33 @@ class MockAdapter(LocomotionCapabilityMixin):
         return AdapterActionResult.ok([{"name": "mock_move", "return_code": 0}])
 
 
-def create_robot_adapter(name: str | None = None) -> RobotAdapter:
+class MockArmAdapter:
+    """Manipulation-class mock adapter (graduated from experiments/capability-mve).
+
+    Proves the capability model spans a *different robot class* (an arm) over the same seam and
+    dispatch with only a new adapter + capability set. It declares manipulation capabilities
+    (not locomotion) and logs each action; no hardware. Swap for a real arm adapter later — the
+    transport and dispatch do not change.
+    """
+
+    name = "mock_arm"
+    # manipulation capabilities + the common safe verbs (stop/estop/home)
+    capabilities = frozenset({"estop", "stop", "home", "grasp", "release", "move_joint"})
+    # per-capability required params (the adapter's own contract; absent = no params required)
+    _required: dict[str, tuple[str, ...]] = {"move_joint": ("joint", "position")}
+
+    def execute(self, action: str, params: dict[str, Any] | None = None) -> AdapterActionResult:
+        params = params or {}
+        missing = [k for k in self._required.get(action, ()) if k not in params]
+        if missing:
+            return AdapterActionResult.failed(
+                f"'{action}' requires params {missing}", detail={"action": action}
+            )
+        print(f"[{now_iso()}] [mock_arm] {action} params={params}")
+        return AdapterActionResult.ok(detail={"action": action, "params": params})
+
+
+def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
     adapter_name = (name or os.environ.get("ROBOT_ADAPTER", "puppypi")).strip().lower()
 
     if adapter_name in {"mock", "dry-run", "dry_run"}:
@@ -436,5 +462,18 @@ def create_robot_adapter(name: str | None = None) -> RobotAdapter:
         return PuppyPiAdapter()
     if adapter_name in {"puppypi_local", "puppypi-local"}:
         return PuppyPiLocalAdapter()
+    if adapter_name in {"mock_arm", "mock-arm"}:
+        return MockArmAdapter()
+    # camera adapters are lazy-imported: control_daemon.camera_adapter pulls in OpenCV only when
+    # a frame is actually grabbed, and this keeps adapters.py free of that dependency at import.
+    if adapter_name in {"camera_mock", "camera-mock", "camera"}:
+        from control_daemon.camera_adapter import CameraSensorAdapter, MockCameraSource
+
+        return CameraSensorAdapter(MockCameraSource(), name="camera_mock")
+    if adapter_name in {"camera_usb", "camera-usb"}:
+        from control_daemon.camera_adapter import CameraSensorAdapter, UsbCameraSource
+
+        device = os.environ.get("CAMERA_DEVICE", "/dev/video0")
+        return CameraSensorAdapter(UsbCameraSource(device), name="camera_usb")
 
     raise ValueError(f"unsupported ROBOT_ADAPTER: {adapter_name}")

@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Generic sensor body node (camera MVE) — control plane + data plane.
+"""Generic sensor body node (ROS/zenoh runnable) — control plane + data plane.
 
-Same generic-body idea as the capability MVE, extended to *sensing*:
+Same generic-body idea as the capability body, extended to *sensing*:
 
 * **control plane** — subscribe ``/openpave/action``; for ``{action:"get_image"}`` (only if the
   adapter declares it) call ``adapter.execute`` and publish the small **metadata** on
   ``/openpave/action_state``.
 * **data plane** — if the adapter produced a frame (``last_jpeg``), publish it as a
-  ``sensor_msgs/CompressedImage`` on ``/openpave/image``. The heavy image never rides in the JSON
-  reply — that separation is the point.
+  ``sensor_msgs/CompressedImage`` on ``/openpave/image``. The heavy image never rides in the
+  JSON result — that separation is the point.
 
-The node knows nothing camera-specific; a different sensor = a different adapter. Select it with
-``ROBOT_ADAPTER`` (default ``camera_mock`` — no hardware). Runs on the body host (e.g. the RPi5 at
-192.168.0.13) as a zenoh ``client``, same transport/deployment as the zenoh + capability MVEs.
+The camera adapter now lives in the runtime (``control_daemon.camera_adapter``); this node is
+just the ROS/zenoh execution layer over it. Select it with ``ROBOT_ADAPTER`` (``camera_mock`` /
+``camera_usb``; ``CAMERA_DEVICE`` picks the USB device). Runs on the body host as a zenoh
+``client``.
 """
 
 from __future__ import annotations
@@ -27,33 +28,24 @@ from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "capability-mve"))
-from capability_schema import CapabilityIntentError, normalize_action_payload, now_iso  # noqa: E402
+# make the repo (runtime) importable: experiments/camera-mve/ -> repo root
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from camera_sensor_adapter import CameraSensorAdapter  # noqa: E402
-from camera_source import MockCameraSource, UsbCameraSource  # noqa: E402
+from pave_runtime.capability_schema import CapabilityIntentError, normalize_action_payload
+from pave_runtime.intent_schema import now_iso
+from control_daemon.adapters import create_robot_adapter
 
 ACTION_TOPIC = "/openpave/action"
 STATE_TOPIC = "/openpave/action_state"
 IMAGE_TOPIC = "/openpave/image"  # data plane
 
-# sensor registry (add new sensors here — nothing else in this file changes)
-ADAPTERS = {
-    "camera_mock": lambda: CameraSensorAdapter(MockCameraSource(), name="camera_mock"),
-    "camera_usb": lambda: CameraSensorAdapter(
-        UsbCameraSource(os.environ.get("CAMERA_DEVICE", "/dev/video0")), name="camera_usb"
-    ),
-}
-
 
 class SensorBody(Node):
     def __init__(self) -> None:
         super().__init__("openpave_body_sensor")
-        adapter_name = os.environ.get("ROBOT_ADAPTER", "camera_mock")
-        if adapter_name not in ADAPTERS:
-            raise SystemExit(f"unknown ROBOT_ADAPTER: {adapter_name} (have {sorted(ADAPTERS)})")
-        self.adapter = ADAPTERS[adapter_name]()
+        self.adapter = create_robot_adapter(os.environ.get("ROBOT_ADAPTER", "camera_mock"))
 
         self.state_pub = self.create_publisher(String, STATE_TOPIC, 10)
         self.image_pub = self.create_publisher(CompressedImage, IMAGE_TOPIC, 10)

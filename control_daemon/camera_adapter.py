@@ -1,18 +1,22 @@
-"""Camera frame sources for the sensing MVE — the *data plane* producer.
+"""Camera sensor adapter (graduated from experiments/camera-mve).
 
-A ``CameraSource`` grabs one **compressed (JPEG)** frame on demand. Two implementations:
+A *sensing* CapabilityAdapter, the counterpart to the actuator adapters: the arm proved the
+capability model spans a different actuator, this proves it spans **sensing**. It declares one
+query capability, ``get_image``, whose ``execute`` returns small **metadata** (the control plane,
+in ``AdapterActionResult.detail``) while stashing the raw JPEG in ``last_jpeg`` for a body node to
+publish on a dedicated compressed-image topic (the **data plane**). Keeping the frame out of the
+result *is* the control/data-plane split.
 
-* ``MockCameraSource`` — a synthetic frame (gradient + frame counter), **no hardware**, so the
-  whole control/data-plane plumbing can be verified before a real camera is attached.
-* ``UsbCameraSource`` — a real USB camera via ``/dev/videoN`` (OpenCV ``VideoCapture``).
-
-OpenCV (``cv2``) is imported lazily inside the methods so this module stays importable for unit
-tests on a machine without OpenCV (the tests drive the adapter with a fake source).
+OpenCV (``cv2``) is imported lazily inside the frame sources, so importing this module never
+requires OpenCV — only actually grabbing a frame does.
 """
 
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
+
+from control_daemon.adapters import AdapterActionResult
+from pave_runtime.intent_schema import now_iso
 
 
 @runtime_checkable
@@ -44,7 +48,6 @@ class MockCameraSource:
         import numpy as np
 
         self._seq += 1
-        # horizontal gradient + a moving band so frames are visibly distinct
         row = np.linspace(0, 255, self._w, dtype=np.uint8)
         frame = np.repeat(row[None, :], self._h, axis=0)
         frame = np.stack([frame, np.roll(frame, self._seq * 4, axis=1), 255 - frame], axis=2)
@@ -74,7 +77,6 @@ class UsbCameraSource:
         import cv2
 
         if self._cap is None:
-            # accept "/dev/video0" or a bare index
             target: Any = self._device
             if isinstance(target, str) and target.startswith("/dev/video"):
                 target = int(target.removeprefix("/dev/video"))
@@ -104,3 +106,45 @@ class UsbCameraSource:
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+
+
+class CameraSensorAdapter:
+    """A camera behind the capability interface. ``get_image`` is a *query* capability: it
+    produces data rather than acting on the world. The frame itself travels on the data plane
+    (see ``last_jpeg``), never inside the control-plane result."""
+
+    def __init__(self, source: CameraSource, name: str = "camera") -> None:
+        self.name = name
+        self.source = source
+        # sensing capability only — deliberately *not* the actuator verbs, to keep the
+        # sensor/actuator distinction explicit.
+        self.capabilities = frozenset({"get_image"})
+        self.last_jpeg: bytes | None = None  # data-plane hand-off for the body node
+        self._seq = 0
+
+    def execute(self, action: str, params: dict[str, Any] | None = None) -> AdapterActionResult:
+        if action != "get_image":
+            return AdapterActionResult.failed(
+                f"'{action}' not a sensing capability", detail={"action": action}
+            )
+
+        try:
+            jpeg = self.source.grab_jpeg()
+        except Exception as exc:  # hardware/read failure -> failed result, no frame
+            self.last_jpeg = None
+            return AdapterActionResult.failed(f"grab failed: {exc}", detail={"action": action})
+
+        self._seq += 1
+        self.last_jpeg = jpeg  # the body publishes this on the compressed-image topic
+        info = self.source.info
+        # control plane = small metadata only (the frame is NOT in here)
+        return AdapterActionResult.ok(detail={
+            "action": action,
+            "encoding": "jpeg",
+            "bytes": len(jpeg),
+            "width": info.get("width"),
+            "height": info.get("height"),
+            "source": info.get("source"),
+            "seq": self._seq,
+            "updated_at": now_iso(),
+        })

@@ -15,10 +15,12 @@ from control_daemon.adapters import (
     AdapterActionResult,
     CapabilityAdapter,
     MockAdapter,
+    MockArmAdapter,
     PuppyPiAdapter,
     RosCliConfig,
     create_robot_adapter,
 )
+from control_daemon.camera_adapter import CameraSensorAdapter
 from pave_runtime.capability_schema import (
     COMMON_CAPABILITIES,
     CapabilityIntentError,
@@ -123,6 +125,86 @@ class LocomotionCapabilityTests(unittest.TestCase):
         adapter = create_robot_adapter("mock")
         self.assertIsInstance(adapter, CapabilityAdapter)
         self.assertIn("stop", adapter.capabilities)
+
+
+class MockArmAdapterTests(unittest.TestCase):
+    """Manipulation class over the same contract (actuation, different from locomotion)."""
+
+    def setUp(self):
+        self.adapter = MockArmAdapter()
+
+    def test_is_capability_adapter_declaring_manipulation(self):
+        self.assertIsInstance(self.adapter, CapabilityAdapter)
+        self.assertTrue(COMMON_CAPABILITIES <= self.adapter.capabilities)  # stop/estop/home
+        self.assertIn("move_joint", self.adapter.capabilities)
+        self.assertNotIn("trot", self.adapter.capabilities)  # not a locomotion robot
+
+    def test_execute_ok_returns_detail(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.adapter.execute("grasp", {})
+        self.assertTrue(result.success)
+        self.assertEqual(result.detail["action"], "grasp")
+
+    def test_move_joint_requires_params(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = self.adapter.execute("move_joint", {"joint": 2})  # missing 'position'
+        self.assertFalse(result.success)
+        self.assertIn("position", result.error)
+
+    def test_created_from_registry(self):
+        adapter = create_robot_adapter("mock_arm")
+        self.assertIsInstance(adapter, MockArmAdapter)
+
+
+class _FakeSource:
+    """A CameraSource stand-in: fixed bytes, no OpenCV/hardware."""
+
+    def __init__(self, payload=b"\xff\xd8\xff\xd9"):
+        self.payload = payload
+        self.grabs = 0
+
+    @property
+    def info(self):
+        return {"width": 4, "height": 2, "source": "fake"}
+
+    def grab_jpeg(self):
+        self.grabs += 1
+        return self.payload
+
+
+class CameraSensorAdapterTests(unittest.TestCase):
+    """Sensing class over the same contract; control/data-plane split."""
+
+    def setUp(self):
+        self.src = _FakeSource()
+        self.adapter = CameraSensorAdapter(self.src, name="camera_test")
+
+    def test_is_capability_adapter_declaring_sensing_only(self):
+        self.assertIsInstance(self.adapter, CapabilityAdapter)
+        self.assertIn("get_image", self.adapter.capabilities)
+        for verb in ("stop", "home", "estop", "move_joint", "grasp"):
+            self.assertNotIn(verb, self.adapter.capabilities)  # sensor, not actuator
+
+    def test_get_image_returns_metadata_and_stashes_frame(self):
+        result = self.adapter.execute("get_image", {})
+        self.assertTrue(result.success)
+        # control plane: metadata only, frame is NOT in the result detail
+        self.assertEqual(result.detail["encoding"], "jpeg")
+        self.assertEqual(result.detail["bytes"], len(self.src.payload))
+        self.assertNotIn("data", result.detail)
+        # data plane: the raw frame is handed off via last_jpeg
+        self.assertEqual(self.adapter.last_jpeg, self.src.payload)
+
+    def test_non_sensing_action_fails(self):
+        result = self.adapter.execute("move_joint", {})
+        self.assertFalse(result.success)
+
+    def test_created_from_registry_without_opencv(self):
+        # create_robot_adapter("camera_mock") must not require OpenCV (lazy import); it only
+        # builds the adapter + mock source, no frame grab here.
+        adapter = create_robot_adapter("camera_mock")
+        self.assertIsInstance(adapter, CameraSensorAdapter)
+        self.assertEqual(adapter.capabilities, frozenset({"get_image"}))
 
 
 class IntentTranslatorTests(unittest.TestCase):

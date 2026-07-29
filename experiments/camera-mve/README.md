@@ -6,9 +6,10 @@ capability and runs over the **same zenoh seam + generic body**, adding only a n
 time producing data instead of acting. It closes the other half of the brain↔body loop (the
 **sensor uplink**), the missing piece for real VLA use.
 
-> **Scope:** experimental, mock-first. It reuses the validated zenoh transport (`../zenoh-mve/`)
-> and the capability contract (`../capability-mve/`), and is not wired into the main runtime. If
-> it proves out, the sensor/actuator split graduates into `pave_runtime`.
+> **Graduated (2026-07-29):** the camera adapter has moved into the runtime —
+> `control_daemon/camera_adapter.py` (`CameraSensorAdapter` + `MockCameraSource` / `UsbCameraSource`),
+> registered in `create_robot_adapter` as `camera_mock` / `camera_usb`. What remains here is the
+> ROS/zenoh execution layer (a runnable sensor body + a get_image brain script).
 
 ## Sensor vs actuator — same contract, two roles
 
@@ -42,17 +43,17 @@ unchanged — nothing is published on the data plane for it.
 
 | File | Role |
 |------|------|
-| `camera_source.py` | `CameraSource` protocol + `MockCameraSource` (synthetic, no HW) + `UsbCameraSource` (`/dev/videoN` via OpenCV) |
-| `camera_sensor_adapter.py` | `CameraSensorAdapter` — `capabilities={"get_image"}`; `execute` → metadata + `last_jpeg` |
-| `sensor_body_node.py` | generic sensor body: control (`/openpave/action` → metadata on `/openpave/action_state`) + data (`/openpave/image`) |
+| `sensor_body_node.py` | generic sensor body: control (`/openpave/action` → metadata on `/openpave/action_state`) + data (`/openpave/image`); adapter from `create_robot_adapter` |
 | `get_image.py` | brain: request one frame, receive metadata + frame, save the JPEG |
-| `test_camera.py` | unit tests (fake source, no ROS/OpenCV/hardware) — 5 tests |
+
+The camera adapter + frame sources and unit tests now live in the runtime:
+`control_daemon/camera_adapter.py` and `tests/test_capability_runtime.py`.
 
 ## Reused unchanged
 
 - **Transport** — zenoh `client` → router on the DGX (same as `../zenoh-mve/`).
-- **Contract** — `capability_schema` + `ActionResult` imported from `../capability-mve/`.
-- **Deployment** — same container pattern; only the body program and one image topic are new.
+- **Contract** — `pave_runtime.capability_schema` + `AdapterActionResult`, from the runtime.
+- **Deployment** — same container pattern; only the sensor body program and one image topic are new.
 
 ## Requirements
 

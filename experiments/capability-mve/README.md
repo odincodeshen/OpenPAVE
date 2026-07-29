@@ -5,9 +5,11 @@ Plan A: **generalize the command model** from fixed locomotion verbs (STOP/TROT/
 hardware* by running a **manipulation-class mock (an arm)** over the **same zenoh seam** — with
 only a new adapter + capability set. No robot hardware needed (mock, zero risk).
 
-> **Scope:** experimental. It reuses the validated zenoh transport (see
-> `../zenoh-mve/`) but is not wired into the main runtime. If it proves out, the contract
-> graduates into `pave_runtime`.
+> **Graduated (2026-07-29):** the capability model has moved into the runtime —
+> `pave_runtime/capability_schema.py` (the `{action, params}` contract) and
+> `control_daemon/adapters.py` (`CapabilityAdapter`, `LocomotionCapabilityMixin`, `MockArmAdapter`,
+> `create_robot_adapter`). What remains here is the ROS/zenoh execution layer (a runnable body
+> node + a send script) that exercises it over the validated zenoh seam.
 
 ## The generalization
 
@@ -24,18 +26,18 @@ The body node no longer knows any robot verbs — it only routes an action to th
 
 | File | Role |
 |------|------|
-| `capability_schema.py` | normalize `{action, params}` (+ `COMMON_CAPABILITIES` = stop/estop/home) |
-| `capability_adapter.py` | `CapabilityAdapter` Protocol + `ActionResult` |
-| `mock_arm_adapter.py` | `MockArmAdapter` — manipulation caps (grasp/release/move_joint), logs only |
-| `capability_body_node.py` | generic body: sub `/openpave/action` → capability check → `execute` → pub `/openpave/action_state` |
+| `capability_body_node.py` | generic body: sub `/openpave/action` → capability check → `execute` → pub `/openpave/action_state` (adapter from `create_robot_adapter`) |
 | `send_action.py` | brain: publish one `{action, params}` |
-| `test_capability.py` | unit tests (schema + arm adapter) |
+
+The contract, adapters, and unit tests now live in the runtime:
+`pave_runtime/capability_schema.py`, `control_daemon/adapters.py` (`MockArmAdapter`,
+`LocomotionCapabilityMixin`, `create_robot_adapter`), and `tests/test_capability_runtime.py`.
 
 ## Reused unchanged from the zenoh MVE
 
 The **transport** (zenoh `client` → router on the DGX) and the **deployment pattern** are the
-same as `../zenoh-mve/` — only the body program and the contract are new. That reuse *is* the
-result being demonstrated.
+same as `../zenoh-mve/`; the body node now dispatches through the **runtime** capability model.
+That reuse — a new robot class over an unchanged seam + runtime — *is* the result being demonstrated.
 
 ## Run (on the plain RPi5 at 192.168.0.13 — mock, no hardware)
 
