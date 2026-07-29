@@ -75,6 +75,9 @@ docker exec -u ubuntu puppypi_ros2 bash -lc \
 # -> std_srvs.srv.SetBool_Response(success=True, ...)
 ```
 
+Or just run **`scripts/check_puppy_control.sh`** on the PuppyPi — it runs this check and
+auto-restarts the ros2 daemon once on a hang, then reports OK / FAILED.
+
 If it hangs: the ros2 daemon may be stale (`ros2 daemon stop`), or puppy_control was
 ctrl-c'd / duplicated — get to a single healthy instance first.
 
