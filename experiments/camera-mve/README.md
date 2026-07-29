@@ -62,7 +62,9 @@ with `CAMERA_DEVICE`). The unit tests need none of this.
 
 ## Run (on the plain RPi5 at 192.168.0.13)
 
-Same container setup as `../zenoh-mve/zenoh_test.md`, running `sensor_body_node.py`:
+Full container bring-up (incl. the OpenCV image build and USB device passthrough) is in the
+[hardware runbook](camera_test.md). In brief — same container setup as `../zenoh-mve/zenoh_test.md`,
+running `sensor_body_node.py`:
 
 1. **Mock first (no camera)** — prove the whole plumbing:
    - **Body — RPi5**: zenoh `client` → DGX router, `ROBOT_ADAPTER=camera_mock`,
