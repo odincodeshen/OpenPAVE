@@ -214,6 +214,59 @@ class PuppyPiAdapter:
         return self._result(steps)
 
 
+class PuppyPiLocalAdapter(PuppyPiAdapter):
+    """PuppyPi adapter for a body node co-located with puppy_control on the robot.
+
+    Same actions as ``PuppyPiAdapter``, but instead of ``docker run`` (a fresh container that
+    cannot reach puppy_control's FastDDS shared-memory segment across IPC namespaces), it
+    ``docker exec``s into the already-running puppy_control container. The ROS 2 CLI then
+    shares that container's IPC namespace (so same-host SHM works) and its workspace (which
+    provides ``puppy_control_msgs`` for velocity_move — no separate ``puppy-ros2-cli`` image
+    needed).
+
+    Use it when the body runs ON the robot (brain-body-zenoh deployment). The original
+    ``PuppyPiAdapter`` (``docker run``, for a remote control host) is unchanged.
+
+    Env config:
+    - ``PUPPY_EXEC_CONTAINER`` (default ``puppypi_ros2``): container running puppy_control
+    - ``PUPPY_EXEC_USER`` (default ``ubuntu``): user to exec as
+    - ``PUPPY_ROS_WS_SETUP`` (default ``/home/ubuntu/ros2_ws/install/setup.bash``): workspace setup
+    """
+
+    name = "puppypi_local"
+
+    def __init__(self, config: RosCliConfig | None = None, runner: CommandRunner | None = None):
+        super().__init__(config=config, runner=runner)
+        self.exec_container = os.environ.get("PUPPY_EXEC_CONTAINER", "puppypi_ros2")
+        self.exec_user = os.environ.get("PUPPY_EXEC_USER", "ubuntu")
+        self.ros_ws_setup = os.environ.get(
+            "PUPPY_ROS_WS_SETUP", "/home/ubuntu/ros2_ws/install/setup.bash"
+        )
+
+    def _exec_prefix(self) -> str:
+        return (
+            f"docker exec -u {self.exec_user} "
+            f"-e ROS_DOMAIN_ID={self.config.ros_domain_id} "
+            f"-e RMW_IMPLEMENTATION={self.config.rmw_implementation} "
+            f"{self.exec_container} bash -lc "
+        )
+
+    def _ros2_service_call(self, service: str, srv_type: str, payload: str) -> int:
+        inner = (
+            f"source /opt/ros/humble/setup.bash && source {self.ros_ws_setup} && "
+            f"ros2 service call {service} {srv_type} '{payload}' >/dev/null 2>&1"
+        )
+        return self._run(self._exec_prefix() + f'"{inner}"')
+
+    def _ros2_topic_pub_velocity_move(self, vx: float, yaw: float) -> int:
+        inner = (
+            f"source /opt/ros/humble/setup.bash && source {self.ros_ws_setup} && "
+            f"ros2 topic pub -1 /puppy_control/velocity_move puppy_control_msgs/msg/Velocity "
+            f"'{{x: {vx}, y: 0.0, yaw_rate: {yaw}}}'"
+        )
+        return self._run(self._exec_prefix() + f'"{inner}"')
+
+
 class MockAdapter:
     """Dry-run adapter for local development without robot hardware."""
 
@@ -243,5 +296,7 @@ def create_robot_adapter(name: str | None = None) -> RobotAdapter:
         return MockAdapter()
     if adapter_name == "puppypi":
         return PuppyPiAdapter()
+    if adapter_name in {"puppypi_local", "puppypi-local"}:
+        return PuppyPiLocalAdapter()
 
     raise ValueError(f"unsupported ROBOT_ADAPTER: {adapter_name}")
