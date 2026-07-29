@@ -51,7 +51,7 @@ Planned future validation targets include:
 - `configs/puppypi.env`: PuppyPi physical validation profile.
 - `scripts/run_stage3_demo.sh`: runtime launcher.
 - `scripts/build_puppy_ros2_cli.sh`: custom PuppyPi ROS 2 CLI image builder.
-- `scripts/start_puppypi_controller.sh`: helper for starting the PuppyPi ROS 2 controller container.
+- `scripts/start_puppy_control.sh`: one-command PuppyPi `puppy_control` bring-up (detached, single-instance, health-checked); `scripts/check_puppy_control.sh`: `puppy_control` health check.
 - `scripts/run_benchmark.py`: scenario benchmark runner.
 - `scripts/summarize_benchmarks.py`: benchmark summary and gate checker.
 - `prompts/`: reusable prompt presets.

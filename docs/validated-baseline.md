@@ -464,33 +464,30 @@ ros2 launch puppy_control puppy_control.launch.py
 
 Keep this terminal open while running the physical robot demo.
 
-If you use the helper script instead:
+If you use the helper script instead (run it **on the PuppyPi**):
 
 ```bash
-cd /path/to/OpenPAVE
-
-export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-
-./scripts/start_puppypi_controller.sh
+./scripts/start_puppy_control.sh
 ```
 
-The script uses these defaults:
+It starts the container, ensures a single `puppy_control` instance, launches it **detached**
+(so it survives — never ctrl-c a foreground launch), and verifies it responds. Defaults:
 
 ```text
-PUPPYPI_CONTAINER=puppypi_ros2
-PUPPYPI_USER=ubuntu
-PUPPYPI_WORKDIR=/home/ubuntu
+PUPPY_EXEC_CONTAINER=puppypi_ros2
+PUPPY_EXEC_USER=ubuntu
+PUPPY_WORKDIR=/home/ubuntu
+PUPPY_ROS_WS_SETUP=/home/ubuntu/ros2_ws/install/setup.bash
 ROS_DOMAIN_ID=0
-RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-PUPPYPI_RESTART_ROS_DAEMON=1
-PUPPYPI_LAUNCH_CMD=ros2 launch puppy_control puppy_control.launch.py
+PUPPY_RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+PUPPY_LAUNCH_CMD=ros2 launch puppy_control puppy_control.launch.py
 ```
 
-If your PuppyPi controller container was rebuilt or retagged, make sure `PUPPYPI_CONTAINER` points to the currently validated container name before starting the helper script:
+If your PuppyPi controller container was rebuilt or retagged, point `PUPPY_EXEC_CONTAINER` at the
+current container name:
 
 ```bash
-PUPPYPI_CONTAINER=<current-controller-container-name> ./scripts/start_puppypi_controller.sh
+PUPPY_EXEC_CONTAINER=<current-controller-container-name> ./scripts/start_puppy_control.sh
 ```
 
 Start the vLLM backend first, then run the OpenPAVE runtime on the DGX/control side.

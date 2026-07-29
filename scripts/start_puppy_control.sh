@@ -8,8 +8,7 @@
 #   4. restarts a stale ros2 daemon, then verifies puppy_control responds.
 #
 # Captures the lessons from the real-robot session — see experiments/zenoh-mve/puppypi_test.md.
-# (The older scripts/start_puppypi_controller.sh runs the launch in the foreground; this one is
-# the robust, detached bring-up.)
+# This is the robust, detached bring-up (survives ctrl-c, single-instance, health-checked).
 #
 # Env (defaults match the validated setup):
 #   PUPPY_EXEC_CONTAINER (puppypi_ros2)  PUPPY_EXEC_USER (ubuntu)  PUPPY_WORKDIR (/home/ubuntu)

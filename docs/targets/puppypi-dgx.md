@@ -106,13 +106,11 @@ source /home/ubuntu/ros2_ws/install/setup.bash
 ros2 launch puppy_control puppy_control.launch.py
 ```
 
-Or use the helper:
+Or use the helper (run it on the PuppyPi — starts the container, launches `puppy_control`
+detached, and verifies it responds):
 
 ```bash
-export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-
-./scripts/start_puppypi_controller.sh
+./scripts/start_puppy_control.sh
 ```
 
 ## Physical Safety
