@@ -74,12 +74,27 @@ Same container setup as `../zenoh-mve/zenoh_test.md`, running `sensor_body_node.
 
 ## Validation checklist
 
-- [ ] **discovery** — DGX sees `/openpave_body_sensor` (same seam as the other MVEs)
-- [ ] **mock plumbing** — `get_image` → frame saved, metadata `{encoding:"jpeg", bytes, w, h, seq}`
-- [ ] **control/data split** — metadata on `/openpave/action_state`, image on `/openpave/image`
-- [ ] **USB camera** — `camera_usb` on `/dev/video0` → saved frame is a real photo
-- [ ] **reuse proven** — transport + contract + deployment identical to the prior MVEs; only a new
+> **✅ Validated 2026-07-29** on DGX (`192.168.0.24`, router + brain) ↔ plain RPi5 (`192.168.0.13`,
+> `osrpi5-2`, sensor body) over zenoh — same transport as the prior MVEs, only a new sensor adapter
+> + one image topic. Ran `camera_mock` (synthetic gradient) then a real **Lenovo USB camera** on
+> `/dev/video0`; the brain saved a 640×480 JPEG in both cases.
+
+- [x] **discovery** — DGX brain reached `/openpave_body_sensor` (same seam as the other MVEs)
+- [x] **mock plumbing** — `get_image` → gradient frame saved (28970 B), metadata
+      `{encoding:"jpeg", bytes, width:640, height:480, source:"mock", seq:1}`
+- [x] **control/data split** — metadata on `/openpave/action_state`; body logged
+      `published frame 28970 bytes on /openpave/image`
+- [x] **USB camera** — `camera_usb` on `/dev/video0` → saved frame is a real photo (`source:"/dev/video0"`)
+- [x] **reuse proven** — transport + contract + deployment identical to the prior MVEs; only a new
       sensor adapter + one image topic
+
+### Notes from the run
+
+- **The image needs cv2** (not in the base ROS image). We baked a derived image once
+  (`apt install python3-opencv` → `docker commit openpave/body-cv:jazzy`); use it for the body.
+- **UVC cold-start** — the very first frame after opening a USB camera is under-exposed (black),
+  because auto-exposure/gain hasn't settled. `UsbCameraSource` now discards `warmup_frames` (8) on
+  open, so the first `get_image` returns a properly-exposed frame.
 
 ## What this proves
 

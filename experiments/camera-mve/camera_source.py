@@ -59,9 +59,11 @@ class MockCameraSource:
 class UsbCameraSource:
     """A real USB camera via V4L2 (``/dev/videoN``). Opens the device once and reuses it."""
 
-    def __init__(self, device: str = "/dev/video0", width: int = 640, height: int = 480) -> None:
+    def __init__(self, device: str = "/dev/video0", width: int = 640, height: int = 480,
+                 warmup_frames: int = 8) -> None:
         self._device = device
         self._w, self._h = width, height
+        self._warmup = warmup_frames  # UVC cold-start: discard a few frames so auto-exposure settles
         self._cap = None
 
     @property
@@ -81,6 +83,8 @@ class UsbCameraSource:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._h)
             if not cap.isOpened():
                 raise RuntimeError(f"cannot open camera {self._device!r} (is --device passed in?)")
+            for _ in range(self._warmup):  # let auto-exposure/gain settle before the first real grab
+                cap.read()
             self._cap = cap
         return self._cap
 
