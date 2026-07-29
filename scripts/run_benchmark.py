@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run OpenPAVE Stage 3C control-path benchmarks."""
+"""Run OpenPAVE scenario-driven control-path benchmarks."""
 
 from __future__ import annotations
 

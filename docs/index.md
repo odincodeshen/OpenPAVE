@@ -11,6 +11,7 @@ OpenPAVE documentation is organized around the current validated baseline, reusa
 ## Architecture and Positioning
 
 - [Architecture](architecture.md): current brain-side, body-side, runtime, feedback, and benchmark roles.
+- [Brain-Body Architecture](architecture-brain-body.md): latest high-level brain/body split and transport architecture diagram.
 - [Arm Physical AI Reference Workflow](arm-physical-ai-ref-workflow.md): non-official Arm/Linux ecosystem reference perspective.
 
 ## Runtime Contracts
@@ -24,6 +25,12 @@ OpenPAVE documentation is organized around the current validated baseline, reusa
 - [Benchmark Harness](benchmark-harness.md): control-path benchmark runner and summary tooling.
 - [Prompts and Scenarios](prompts-and-scenarios.md): repo-managed prompt presets and scenario definitions.
 - [OpenPAVE Console](pave-console.md): `/pave` console, runtime feedback, and live-vlm-webui reuse boundary.
+
+## Experimental Brain-Body Transport
+
+- [zenoh MVE](../experiments/zenoh-mve/README.md): experimental brain-body transport smoke test.
+- [zenoh Hardware Runbook](../experiments/zenoh-mve/zenoh_test.md): DGX/RPi bring-up commands and validation notes.
+- [PuppyPi Real-Adapter Run](../experiments/zenoh-mve/puppypi_test.md): real PuppyPi validation over zenoh with the local PuppyPi adapter.
 
 ## Notices
 

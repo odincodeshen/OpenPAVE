@@ -159,6 +159,7 @@ Start here:
 Core specs:
 
 - [Architecture](docs/architecture.md)
+- [Brain-Body Architecture](docs/architecture-brain-body.md)
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)

@@ -15,6 +15,16 @@ OpenPAVE 幫助開發者快速驗證 local inference/control node 如何連接 r
 - observability UI
 - benchmark scenarios
 
+## Demo
+
+依照專案版本整理的 OpenPAVE brain-body workflow 錄影：
+
+- **v0.9 — Real-time VLA on DGX Spark: RPi quadruped with LLaVA-7B** — [watch](https://youtu.be/kRiXri0te0g?si=iOhW0d2SSSP6zT4V)
+  早期 end-to-end proof of concept：在 DGX Spark 上執行 LLaVA-7B vision-language model，即時驅動 RPi-based quadruped（PuppyPi）。這條 brain-side inference -> body-side motion loop，後續被 OpenPAVE 正式整理成 normalized intent、robot adapters 與 feedback。
+
+- **v1.3 — Stage 3 runtime** — [watch](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
+  v1.3（Stage 3）iteration 的短片。這個 runtime 後續硬化成 Validated Baseline v1.0：intent ingress -> control daemon -> PuppyPi adapter control path，並包含 `/pave` console 與 command/state feedback。
+
 ## Validated Baseline v1.0
 
 目前 repo 以以下 baseline 為核心整理：
@@ -32,6 +42,8 @@ PuppyPi + DGX
 ```
 
 PuppyPi + DGX 是 validated target，不是專案邊界。未來規劃的 targets 包含 SO-101 robot arm + camera + DGX、Raspberry Pi ROS 2 car/camera + DGX 或 Thor，以及使用不同 ROS 2 communication pattern 的其他 robot/sensor endpoints。
+
+OpenPAVE 的 brain-side platform 目標是 Armv9 平台家族（目前是 DGX；未來規劃 Thor 與其他 Armv9 edge nodes），而不是單一 vendor 或 SKU。
 
 ## Architecture
 
@@ -64,7 +76,7 @@ flowchart LR
 
 目前實作：
 
-- Brain side：DGX 執行 vLLM、OpenPAVE runtime services 與 `/pave` console。
+- Brain side：DGX（Armv9 Grace CPU + Nvidia GPU）執行 vLLM、OpenPAVE runtime services 與 `/pave` console。
 - Body side：PuppyPi 執行 ROS 2 `puppy_control`。
 - Control path：Intent Ingress -> Control Daemon -> Robot Adapter -> Dockerized ROS 2 CLI。
 - Feedback path：command result 與 robot state JSON files，供 UI 與 benchmark harness 使用。
@@ -143,6 +155,7 @@ python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 核心規格：
 
 - [Architecture](docs/architecture.md)
+- [Brain-Body Architecture](docs/architecture-brain-body.md)
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
