@@ -71,7 +71,7 @@ OpenPAVE 的 brain-side platform 目標是 Armv9 平台家族（目前是 DGX；
 flowchart LR
     subgraph Body["Body Side: Robot / Sensor Endpoint"]
         Sensors["Sensors\ncamera, raw USB, ROS 2 image, future lidar/audio"]
-        RobotCtl["Robot-side control\nROS 2 services/topics or future bridge"]
+        RobotCtl["Robot-side control\nROS 2 services/topics; persistent bridge (experimental)"]
     end
 
     subgraph Brain["Brain Side: Local Inference / Control Node"]
@@ -155,7 +155,7 @@ python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 
 ## Current Limitations
 
-- 目前 PuppyPi command path 使用 Dockerized one-shot ROS 2 CLI calls。這個方式簡單且可重現，但不是最終的 low-latency robot control plane。
+- 目前 **default** 的 PuppyPi command path 使用 Dockerized one-shot ROS 2 CLI calls，簡單且可重現。現在已有一條 experimental 的 low-latency control plane（`ROBOT_ADAPTER=puppypi_bridge`，常駐 body-side bridge，並自動 fallback 回 CLI path；真機 PuppyPi STOP p95 −89%），但尚未成為 default。見 `experiments/persistent-bridge/`。
 - ROS 2 over Wi-Fi 與 DDS/RMW 行為可能因 machine、network、container image 與 firewall settings 而不同。目前 validated default path 是 `rmw_fastrtps_cpp`；`rmw_cyclonedds_cpp` 已記錄為 environment-specific workaround。
 - `/pave` console 目前仍位於 OpenPAVE-maintained `live-vlm-webui` fork。未來規劃 OpenPAVE-native console。
 - Camera/sensor replay 與完整 end-to-end VLM/VLA quality benchmarking 是 future work。

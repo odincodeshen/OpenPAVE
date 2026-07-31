@@ -15,19 +15,23 @@ normalized intent
 
 ## Adapter Interface
 
-The current adapter interface exposes four common capabilities:
+Adapters are **capability-declarative**. An adapter declares which actions it supports and
+executes any of them:
 
-- `stop()`
-- `trot()`
-- `home()`
-- `move(vx, yaw, duration_ms)`
+- `name: str`
+- `capabilities: frozenset[str]` — the actions this adapter supports (e.g. `stop`, `estop`,
+  `home`, `trot`, `move`, `grasp`, `move_joint`, `get_image`)
+- `execute(action, params) -> AdapterActionResult`
 
-These match the current MVP intent set from intent schema v0.1:
+The generic dispatch routes an action to the adapter **only if the adapter declares it**, so a
+new robot class is a new adapter and nothing else changes (locomotion, manipulation, and sensing
+all share this contract). The contract + helpers live in `pave_runtime/capability_schema.py`
+(`{action, params}` normalization) and `control_daemon/adapters.py` (`CapabilityAdapter`).
 
-- `STOP`
-- `TROT`
-- `HOME`
-- `MOVE`
+**Legacy locomotion verbs** (`stop/trot/home/move`) are retained via `LocomotionCapabilityMixin`,
+which exposes them as capabilities and maps the old `STOP/TROT/HOME/MOVE` intent — translated by
+`intent_to_capability_action` — onto `execute`. So existing intent-schema-v0.1 payloads keep
+working unchanged.
 
 ## Available Adapters
 
@@ -68,6 +72,38 @@ Aliases:
 - `mock`
 - `dry-run`
 - `dry_run`
+
+### PuppyPiLocalAdapter
+
+`PuppyPiLocalAdapter` (`ROBOT_ADAPTER=puppypi_local`) is for a body node **co-located with
+puppy_control on the robot**. Instead of `docker run`, it `docker exec`s into the running
+puppy_control container (shared IPC namespace so FastDDS shared memory works), batches each
+action into **one** exec running an rclpy gait runner, and escalates STOP to a hard-stop
+(`pkill` the gait loop) if the graceful STOP times out.
+
+### PuppyPiBridgeAdapter (experimental)
+
+`PuppyPiBridgeAdapter` (`ROBOT_ADAPTER=puppypi_bridge`) is a **low-latency, experimental**
+adapter: it tries a persistent body-side bridge (long-running ROS 2 service clients over a
+localhost socket) and **falls back to the `puppypi_local` path automatically** (with a cooldown)
+if the bridge is unavailable. STOP uses a short bridge timeout; results record `path`
+(`bridge` / `fallback_a`) + latency. Real PuppyPi: HOME −66%, STOP p95 −89%. **Not the default** —
+`puppypi_local` stays the validated path. See `experiments/persistent-bridge/`.
+
+### MockArmAdapter
+
+`MockArmAdapter` (`ROBOT_ADAPTER=mock_arm`) is a **manipulation-class** mock: it declares
+`grasp / release / move_joint` (plus the common `stop/estop/home`) and logs each action. It
+proves the capability model spans a different robot class over the same seam with only a new
+adapter — no hardware.
+
+### CameraSensorAdapter
+
+`CameraSensorAdapter` (`ROBOT_ADAPTER=camera_mock` / `camera_usb`) is a **sensing-class** adapter
+declaring `get_image`. `execute` returns small metadata (the control plane) and hands the JPEG to
+the body node for a dedicated compressed-image topic (the data plane) — the control-plane /
+data-plane split. `camera_mock` needs no hardware; `camera_usb` reads a real USB camera. See
+`control_daemon/camera_adapter.py`.
 
 ## Command Construction and Trust Boundary
 
@@ -114,10 +150,11 @@ Guidance for anyone extending an adapter:
 
 Future robot adapters should:
 
-- implement `stop`, `trot`, `home`, and `move`
+- **declare `capabilities` and implement `execute(action, params)`** (or reuse
+  `LocomotionCapabilityMixin` for a locomotion robot that speaks stop/trot/home/move)
 - keep robot-specific services, topics, SDK calls, or transport details out of the daemon core
 - accept configuration through environment variables or a future config file
-- preserve safe behavior for unsupported commands where possible
+- rely on the generic dispatch to return `unsupported` for actions not in `capabilities`
 - include a mockable command path for tests
 - follow the trust-boundary guidance above when building command strings: do not rely on
   schema validation alone to keep interpolated values shell-safe

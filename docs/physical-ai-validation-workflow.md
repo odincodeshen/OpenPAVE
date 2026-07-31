@@ -81,9 +81,9 @@ The intent contract translates model/user output into a stable runtime command f
 
 Current status:
 
-- intent schema v0.1 implemented
-- `STOP`, `TROT`, `HOME`, and `MOVE` supported
-- metadata and validation rules implemented
+- intent schema v0.1 implemented (`STOP`, `TROT`, `HOME`, `MOVE`) with metadata and validation
+- **generalized to a capability-declarative contract** (`{action, params}` + adapters declare
+  `capabilities`); the legacy verbs are kept as a translator so existing payloads still work
 - unsafe or unknown output maps toward safe behavior
 
 ### 4. Robot Adapter Layer
@@ -92,15 +92,16 @@ The robot adapter maps normalized intents to target-specific control calls.
 
 Current status:
 
-- `MockAdapter`
-- `PuppyPiAdapter`
-- Dockerized ROS 2 CLI path for PuppyPi validation
+- capability-declarative adapters spanning **locomotion, manipulation, and sensing**:
+  `PuppyPiAdapter` / `PuppyPiLocalAdapter`, `MockAdapter`, `MockArmAdapter`, `CameraSensorAdapter`
+- Dockerized ROS 2 CLI path for PuppyPi validation (default)
+- **persistent bridge adapter** (`puppypi_bridge`, experimental) for lower-latency command
+  execution, with automatic fallback to the CLI path (real PuppyPi STOP p95 −89%)
 
 Expected evolution:
 
 - target-specific adapters for SO-101 and Raspberry Pi ROS 2 car/camera
-- richer capability contracts
-- persistent robot bridge for lower-latency command execution
+- make the persistent bridge the default once it soaks; generalize it beyond PuppyPi
 
 ### 5. Observability Layer
 
@@ -147,8 +148,10 @@ Validated Baseline v1.0 is intentionally simple and reproducible. It validates t
 
 Known future work:
 
-- improve brain-body transport beyond the current ROS 2 over Wi-Fi reference path
-- replace one-shot Dockerized ROS 2 CLI command execution with a persistent robot bridge
+- improve brain-body transport beyond the current ROS 2 over Wi-Fi reference path (zenoh MVE done;
+  a neutral non-ROS seam is planned)
+- make the persistent robot bridge the default (implemented + real-robot validated; currently
+  experimental with automatic fallback)
 - add SO-101 and Raspberry Pi ROS 2 car/camera targets
 - add sensor replay and end-to-end VLM/VLA quality benchmarks
 - decouple the OpenPAVE console from `live-vlm-webui`
