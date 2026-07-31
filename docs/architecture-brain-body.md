@@ -70,3 +70,13 @@ sensor observation + user/task prompt + robot/body state
 -> body RPC
 -> body-side controller or adapter
 ```
+
+## Relationship to Demo Integration Levels
+
+This brain/body control contract is the deep-integration path in OpenPAVE. It
+applies when a demo chooses Level 3 or Level 4 integration.
+
+Other demos can still be represented in OpenPAVE at lighter levels, such as a
+catalogue entry, launch/status wrapper, or result bridge. Those demos can keep
+their own runtime and control loop while using OpenPAVE for discovery,
+observability, validation notes, or later benchmark integration.

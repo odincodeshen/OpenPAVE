@@ -1,14 +1,14 @@
-# Arm Physical AI Reference Workflow
+# Physical AI Validation Workflow
 
 ## Purpose
 
-This document describes OpenPAVE from an Arm/Linux Physical AI ecosystem perspective.
+This document describes OpenPAVE as a Physical AI validation workflow for local inference/control nodes, robot/sensor endpoints, middleware, and Arm-based edge computing platforms.
 
-It is a project-level reference workflow note. It is not an official Arm position, product statement, endorsement, or architecture specification.
+It is a project-level note. It is not an official Arm position, product statement, endorsement, or architecture specification.
 
 ## Positioning
 
-OpenPAVE is a local-first validation workflow for edge Physical AI experiments and brain-body co-computing.
+OpenPAVE is an open reference workflow for Physical AI validation and experimentation on Arm-based edge computing platforms.
 
 The workflow connects:
 
@@ -22,7 +22,7 @@ body-side robot/sensor endpoint
 -> state, command result, and benchmark feedback
 ```
 
-The current validated target is PuppyPi + DGX. That target proves the workflow, but it is not the project boundary.
+The current validated deep-integration target is PuppyPi + DGX. That target proves the full brain/control path, but it is not the project boundary. Other demos can join OpenPAVE through lighter integration levels such as catalogue entries, launch/status wrappers, or result bridges.
 
 ## Why This Matters for the Arm Ecosystem
 
@@ -143,7 +143,7 @@ Expected evolution:
 
 ## Current Baseline and Future Work
 
-Validated Baseline v1.0 is intentionally simple and reproducible. It validates the integration path before optimizing brain-body transport, control latency, and hardware coverage.
+Validated Baseline v1.0 is intentionally simple and reproducible. It validates the deep-integration path before optimizing brain-body transport, control latency, and hardware coverage.
 
 Known future work:
 
