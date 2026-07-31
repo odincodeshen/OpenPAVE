@@ -36,6 +36,7 @@ class Bridge:
         self.clients: dict = {}  # ("svc"/"pub", name) -> client/publisher, reused across requests
         self.host, self.port = host, port
         self.log = self.node.get_logger()
+        self._active = False  # single active request guard (B2 busy behavior)
 
     def serve(self) -> None:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -70,21 +71,40 @@ class Bridge:
         svc_clients = [c for key, c in self.clients.items() if key[0] == "svc"]
         return all(c.service_is_ready() for c in svc_clients)  # True (vacuously) before first use
 
+    def _pong_detail(self) -> dict:
+        # readiness + diagnostics; the adapter gates usability on services_ready (review #4)
+        return {
+            "services_ready": self._services_ready(),
+            "controller": "puppy_control",
+            "rmw": os.environ.get("RMW_IMPLEMENTATION", ""),
+            "ros_domain_id": os.environ.get("ROS_DOMAIN_ID", ""),
+            "bridge_pid": os.getpid(),
+        }
+
     def _on_line(self, conn: socket.socket, line: str) -> None:
         req_id = None
         try:
             msg = bp.decode(line)
             req_id = msg.get("id")
             if msg.get("type") == bp.T_PING:  # liveness/readiness probe (B2 fallback uses this)
-                conn.sendall(bp.encode(bp.make_pong(
-                    req_id, ready=True, detail={"services_ready": self._services_ready()})))
+                conn.sendall(bp.encode(bp.make_pong(req_id, ready=True, detail=self._pong_detail())))
                 return
-            req_id, steps, timeout_ms = bp.validate_request(msg)
-            default_timeout = timeout_ms / 1000.0 if timeout_ms else 5.0
-            results = execute_steps(self.node, steps, self.clients, default_timeout=default_timeout)
-            ok = all(r["rc"] == 0 for r in results)
-            conn.sendall(bp.encode(bp.make_result(req_id, ok, results)))
-            self.log.info(f"req {req_id} · {len(steps)} steps · ok={ok}")
+            # single active request, no queue (B2): overlap -> 'busy'. Single-threaded serving makes
+            # this rare, but it defines the contract for any future concurrency.
+            if self._active:
+                conn.sendall(bp.encode(bp.make_error(
+                    req_id, "bridge is executing another request", bp.E_BUSY)))
+                return
+            self._active = True
+            try:
+                req_id, steps, timeout_ms = bp.validate_request(msg)
+                default_timeout = timeout_ms / 1000.0 if timeout_ms else 5.0
+                results = execute_steps(self.node, steps, self.clients, default_timeout=default_timeout)
+                ok = all(r["rc"] == 0 for r in results)
+                conn.sendall(bp.encode(bp.make_result(req_id, ok, results)))
+                self.log.info(f"req {req_id} · {len(steps)} steps · ok={ok}")
+            finally:
+                self._active = False
         except bp.ProtocolError as exc:
             conn.sendall(bp.encode(bp.make_error(req_id, str(exc), exc.code)))
             self.log.warn(f"rejected req {req_id}: [{exc.code}] {exc}")

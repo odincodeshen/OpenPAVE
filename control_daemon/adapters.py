@@ -442,6 +442,112 @@ class PuppyPiLocalAdapter(PuppyPiAdapter):
         return self._result(motion + home)
 
 
+class PuppyPiBridgeAdapter(PuppyPiLocalAdapter):
+    """B2: PuppyPi over the persistent bridge, with automatic fallback to A (docker exec).
+
+    Overrides only ``_run_gait``: try the bridge (socket + already-connected call()); on any bridge
+    error, fall back to ``PuppyPiLocalAdapter``'s docker-exec runner (A) and enter a cooldown so we
+    stop paying the bridge timeout for a while. ``stop/trot/home/move`` and the hard-stop
+    escalation in ``stop()`` are inherited **unchanged** — so bridge and fallback go through the
+    same actions, and hard-stop stays independent of the bridge.
+
+    Experimental (``ROBOT_ADAPTER=puppypi_bridge``), **not a default**; the validated path is
+    ``puppypi_local``. Env:
+    - ``PUPPY_BRIDGE_SOCKET`` (unix path) OR ``PUPPY_BRIDGE_HOST`` / ``PUPPY_BRIDGE_PORT`` (tcp,
+      default 127.0.0.1:8787) — picked per the socket-namespace decision.
+    - ``PUPPY_BRIDGE_RETRY_SEC`` (cooldown after a failure, default 10)
+    - ``PUPPY_BRIDGE_CALL_TIMEOUT_SEC`` (default 5) / ``PUPPY_BRIDGE_STOP_TIMEOUT_SEC`` (short,
+      default 1 — STOP must not wait long on the bridge before falling back)
+    - ``PUPPY_BRIDGE_PING_TIMEOUT_SEC`` (default 2)
+    """
+
+    name = "puppypi_bridge"
+
+    def __init__(self, config=None, runner=None, capture_runner=None, bridge_client=None):
+        super().__init__(config=config, runner=runner, capture_runner=capture_runner)
+        self._client_obj = bridge_client  # injectable for tests
+        self.retry_sec = float(os.environ.get("PUPPY_BRIDGE_RETRY_SEC", "10"))
+        self.bridge_call_timeout = float(os.environ.get("PUPPY_BRIDGE_CALL_TIMEOUT_SEC", "5"))
+        self.bridge_stop_timeout = float(os.environ.get("PUPPY_BRIDGE_STOP_TIMEOUT_SEC", "1"))
+        self.bridge_ping_timeout = float(os.environ.get("PUPPY_BRIDGE_PING_TIMEOUT_SEC", "2"))
+        self._bridge_ready: bool | None = None  # None=unprobed, True=usable, False=down/cooldown
+        self._cooldown_until = 0.0
+        self._last_reason = "bridge_unavailable"
+        self._path_log: list[dict] = []
+
+    def _client(self):
+        if self._client_obj is None:
+            from control_daemon.bridge_client import BridgeClient
+            self._client_obj = BridgeClient(self._bridge_endpoint())
+        return self._client_obj
+
+    def _bridge_endpoint(self) -> tuple:
+        sock = os.environ.get("PUPPY_BRIDGE_SOCKET")
+        if sock:
+            return ("unix", sock)
+        return ("tcp", os.environ.get("PUPPY_BRIDGE_HOST", "127.0.0.1"),
+                int(os.environ.get("PUPPY_BRIDGE_PORT", "8787")))
+
+    # ---- readiness gate + cooldown (design §3.3) ----
+    def _bridge_usable(self) -> bool:
+        if time.monotonic() < self._cooldown_until:
+            return False
+        if self._bridge_ready:
+            return True
+        # probe (first use / after cooldown): usable only if ready AND services_ready (review #4)
+        try:
+            ready, detail = self._client().ping(timeout=self.bridge_ping_timeout)
+        except (ConnectionError, OSError):
+            self._bridge_down("bridge_unavailable")
+            return False
+        if ready and detail.get("services_ready"):
+            self._bridge_ready = True
+            return True
+        self._bridge_down("bridge_not_ready")
+        return False
+
+    def _bridge_down(self, reason: str) -> None:
+        self._bridge_ready = False
+        self._cooldown_until = time.monotonic() + self.retry_sec
+        self._last_reason = reason
+        print(f"[{now_iso()}] bridge unavailable ({reason}) -> fallback A, cooldown {self.retry_sec}s")
+
+    # ---- the one override: try bridge, else fall back to A ----
+    def _run_gait(self, steps, node_timeout=None):
+        is_stop = node_timeout is not None  # stop() passes its short stop_timeout_sec
+        if self._bridge_usable():
+            timeout = self.bridge_stop_timeout if is_stop else self.bridge_call_timeout
+            t0 = time.perf_counter()
+            try:
+                from control_daemon.bridge_client import BridgeError
+                ok, out = self._client().run_steps(steps, timeout=timeout)
+                steps_out = [{"name": r.get("name", "step"), "return_code": r.get("rc", 1)} for r in out]
+                self._path_log.append({"path": "bridge", "latency_ms": (time.perf_counter() - t0) * 1000})
+                return (0 if ok else 1), steps_out
+            except BridgeError as exc:
+                self._bridge_down(exc.code or "bridge_error")
+            except (ConnectionError, OSError):
+                self._bridge_down("bridge_error")
+        t0 = time.perf_counter()
+        rc, out = super()._run_gait(steps, node_timeout)  # A path (docker exec runner)
+        self._path_log.append({"path": "fallback_a", "latency_ms": (time.perf_counter() - t0) * 1000,
+                               "reason": self._last_reason})
+        return rc, out
+
+    # ---- record which path each action used (review #3) ----
+    def execute(self, action: str, params: "dict | None" = None) -> AdapterActionResult:
+        self._path_log = []
+        result = super().execute(action, params)
+        if self._path_log:
+            used_fallback = any(p["path"] == "fallback_a" for p in self._path_log)
+            result.detail["path"] = "fallback_a" if used_fallback else "bridge"
+            result.detail["latency_ms"] = round(sum(p["latency_ms"] for p in self._path_log), 1)
+            if used_fallback:
+                reasons = [p.get("reason") for p in self._path_log if p["path"] == "fallback_a"]
+                result.detail["fallback_reason"] = next((r for r in reasons if r), "bridge_unavailable")
+        return result
+
+
 class MockAdapter(LocomotionCapabilityMixin):
     """Dry-run adapter for local development without robot hardware."""
 
@@ -499,6 +605,8 @@ def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
         return PuppyPiAdapter()
     if adapter_name in {"puppypi_local", "puppypi-local"}:
         return PuppyPiLocalAdapter()
+    if adapter_name in {"puppypi_bridge", "puppypi-bridge"}:
+        return PuppyPiBridgeAdapter()  # experimental (B2): bridge with fallback to puppypi_local
     if adapter_name in {"mock_arm", "mock-arm"}:
         return MockArmAdapter()
     # camera adapters are lazy-imported: control_daemon.camera_adapter pulls in OpenCV only when

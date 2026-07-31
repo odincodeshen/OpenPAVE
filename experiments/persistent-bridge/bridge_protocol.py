@@ -43,6 +43,7 @@ E_BAD_JSON = "bad_json"
 E_BAD_REQUEST = "bad_request"
 E_UNSUPPORTED_MODE = "unsupported_mode"
 E_UNSUPPORTED_OP = "unsupported_op"
+E_BUSY = "busy"  # a request arrived while another is executing (B2: single active request, no queue)
 
 
 class ProtocolError(ValueError):
