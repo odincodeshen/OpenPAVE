@@ -151,6 +151,5 @@ Before changing OpenPAVE code, verify:
 
 ## Current Limitations
 
-- The current adapter uses one-shot Dockerized ROS 2 CLI calls. This is reproducible and inspectable, but not the final low-latency control plane.
-- ROS 2 over Wi-Fi is a baseline communication path, not the final optimized brain-body transport design.
-- Future work will add a persistent robot bridge and transport-layer upgrade path.
+- The **default** adapter uses one-shot Dockerized ROS 2 CLI calls — reproducible and inspectable. An experimental low-latency path is now implemented and real-robot validated (`ROBOT_ADAPTER=puppypi_bridge`, a persistent body-side bridge with automatic fallback to the CLI path; HOME −66%, STOP p95 −89%), but it is not yet the default. See `experiments/persistent-bridge/`.
+- ROS 2 over Wi-Fi is a baseline communication path, not the final optimized brain-body transport design (a zenoh MVE has been explored; a neutral non-ROS seam is planned).

@@ -47,8 +47,8 @@ This role provides physical-world observations and accepts control commands.
 Responsibilities:
 
 - expose camera, raw USB, ROS 2 image, depth, audio, lidar, robot state, or other sensor streams
-- run robot-side controllers, ROS 2 services/topics, or future bridge processes
-- receive commands from an OpenPAVE adapter or future transport-aware bridge
+- run robot-side controllers, ROS 2 services/topics, or a persistent bridge process (experimental)
+- receive commands from an OpenPAVE adapter (Docker-CLI path or the experimental persistent bridge)
 - execute physical or simulated robot actions
 
 Current validation:
