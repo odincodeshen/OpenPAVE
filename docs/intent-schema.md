@@ -1,5 +1,11 @@
 # Intent Schema v0.1
 
+> **Now generalized:** the fixed v0.1 set (`STOP/TROT/HOME/MOVE`) has been generalized into a
+> **capability-declarative** contract (`{action, params}` + adapters declaring `capabilities`,
+> schema `cap-0.1`). This v0.1 remains the **locomotion vocabulary** and is translated onto
+> capabilities by `intent_to_capability_action`, so existing payloads keep working unchanged.
+> See [Robot Adapters](robot-adapters.md).
+
 ## Purpose
 
 OpenPAVE uses a small intent schema to separate VLM/VLA output from robot-specific control code. The schema is the runtime contract between:

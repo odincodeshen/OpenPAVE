@@ -85,6 +85,10 @@ For `PuppyPiAdapter`, `steps` records ROS 2 CLI call return codes, such as:
 - `go_home`
 - `velocity_move`
 
+Capability adapters use the same result shape and may add a `detail` object: the `puppypi_bridge`
+adapter records `path` (`bridge` / `fallback_a`) + latency; a sensor adapter (`camera`) records
+frame metadata (`encoding`, `bytes`, `width`, `height`).
+
 ## Robot State Shape
 
 Example:

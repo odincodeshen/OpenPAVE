@@ -53,7 +53,8 @@ body is doing.
 
 High-bandwidth sensor payloads, such as camera frames, depth images, audio, or
 lidar streams, should be modeled as a separate sensor/data plane rather than
-embedded directly in body-emitted state.
+embedded directly in body-emitted state. The camera MVE implements this split:
+small metadata on the control plane, the JPEG on a dedicated compressed topic.
 
 ### Brain-Side Model Input and Output
 

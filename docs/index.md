@@ -13,7 +13,7 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 
 - [Contributing Demos](contributing-demos.md): how to describe a demo, choose an integration level, and add optional launch/status/result hooks.
 - [Demo Integration Levels](demo-integration-levels.md): Level 0 catalogue entries through Level 4 benchmark integration.
-- [Robot Adapters](robot-adapters.md): adapter boundary and current `MockAdapter` / `PuppyPiAdapter`.
+- [Robot Adapters](robot-adapters.md): capability-declarative adapter boundary (locomotion / manipulation / sensing), including `PuppyPiLocalAdapter` and the experimental `puppypi_bridge`.
 - [Benchmark Harness](benchmark-harness.md): control-path benchmark runner and summary tooling.
 
 ## Architecture and Positioning
@@ -25,7 +25,7 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 
 ## Runtime Contracts
 
-- [Intent Schema](intent-schema.md): normalized intent schema v0.1.
+- [Intent Schema](intent-schema.md): normalized intent schema v0.1, now generalized into a capability-declarative contract.
 - [Robot Feedback](robot-feedback.md): command result and robot state feedback files.
 - [Prompts and Scenarios](prompts-and-scenarios.md): repo-managed prompt presets and scenario definitions.
 - [OpenPAVE Console](pave-console.md): `/pave` console, runtime feedback, and live-vlm-webui reuse boundary.
@@ -36,6 +36,9 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 - [zenoh MVE](../experiments/zenoh-mve/README.md): experimental brain-body transport smoke test.
 - [zenoh Hardware Runbook](../experiments/zenoh-mve/zenoh_test.md): DGX/RPi bring-up commands and validation notes.
 - [PuppyPi Real-Adapter Run](../experiments/zenoh-mve/puppypi_test.md): real PuppyPi validation over zenoh with the local PuppyPi adapter.
+- [Capability MVE](../experiments/capability-mve/README.md): capability-declarative model over the same seam (manipulation `mock_arm`).
+- [Camera MVE](../experiments/camera-mve/README.md): sensing over the seam with a control-plane / data-plane split.
+- [Persistent Bridge](../experiments/persistent-bridge/README.md): low-latency body-side bridge (A / B1 / B2) with fallback; real-robot before/after in `b2_result.md`.
 
 ## Notices
 
