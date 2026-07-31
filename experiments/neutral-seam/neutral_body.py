@@ -59,9 +59,20 @@ def dispatch(adapter, payload: dict) -> dict:
             "detail": result.detail, "error": result.error}
 
 
+def zenoh_config() -> "zenoh.Config":
+    """Default peer (multicast) config; override for cross-host via env:
+    ``ZENOH_LISTEN=tcp/0.0.0.0:7447`` (this side listens) or ``ZENOH_CONNECT=tcp/<host>:7447``."""
+    conf = zenoh.Config()
+    for key, env in (("connect/endpoints", "ZENOH_CONNECT"), ("listen/endpoints", "ZENOH_LISTEN")):
+        val = os.environ.get(env)
+        if val:
+            conf.insert_json5(key, json.dumps([val]))
+    return conf
+
+
 def main() -> None:
     adapter = create_robot_adapter(os.environ.get("ROBOT_ADAPTER", "mock_arm"))
-    session = zenoh.open(zenoh.Config())
+    session = zenoh.open(zenoh_config())
     state_pub = session.declare_publisher(STATE_KEY)
 
     def publish(obj: dict) -> None:
