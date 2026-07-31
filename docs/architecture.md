@@ -2,11 +2,11 @@
 
 ## Purpose
 
-OpenPAVE is a local-first validation workflow for edge Physical AI experiments and brain-body co-computing.
+OpenPAVE is an open reference workflow for Physical AI validation and experimentation.
 
-The architecture helps developers validate how a brain-side local inference/control node connects to body-side robot or sensor endpoints, how runtime behavior can be observed, how scenarios can be benchmarked, and how hardware targets can be replaced.
+The architecture helps developers validate how local inference, robot or sensor endpoints, middleware, runtime feedback, observability, and benchmark paths fit together.
 
-PuppyPi + DGX is the first validated target, not the project boundary.
+PuppyPi + DGX is the first validated deep-integration target, not the project boundary. Other demos can join OpenPAVE at lighter integration levels, such as catalogue-only entries, launch/status wrappers, or result bridges.
 
 ## Current Architecture
 
@@ -124,6 +124,20 @@ OpenPAVE /pave or benchmark
 
 This path favors reproducibility and debuggability over low-latency robot control.
 
+## Demo Integration Levels
+
+Not every Physical AI demo needs to use the full baseline path. OpenPAVE supports progressive integration:
+
+```text
+Level 0: Catalogue only
+Level 1: Launch / status / result wrapper
+Level 2: State or result bridge
+Level 3: Normalized intent / control contract
+Level 4: Benchmark integration
+```
+
+The PuppyPi + DGX baseline demonstrates the deep-integration path. Demos with their own runtime, model policy, control loop, or hardware workflow can start at Level 0 or Level 1 and deepen integration only where it is useful.
+
 ## Current Limitations
 
 ### Brain-Body Transport
@@ -190,7 +204,8 @@ http://localhost:8000/v1
 
 ## Design Notes
 
-- PuppyPi + DGX is the first validated target, not the final hardware boundary.
+- PuppyPi + DGX is the first validated deep-integration target, not the final hardware boundary.
+- Demo integration levels let demos join OpenPAVE without adopting the full baseline runtime path.
 - Robot adapters are the current contribution surface for new hardware.
 - Sensor assumptions should be explicit in prompts, scenarios, and benchmarks.
 - `ROS_DOMAIN_ID` and `RMW_IMPLEMENTATION` must match across ROS 2 participants.

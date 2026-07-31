@@ -1,19 +1,33 @@
-# OpenPAVE: Open Physical-AI VLA Experimentation
+# OpenPAVE: Open Physical AI Validation and Experimentation
 
-## A local-first validation workflow for edge Physical AI and brain-body co-computing
+## An open reference workflow for Physical AI demos on Arm-based edge platforms
 
-OpenPAVE helps developers rapidly validate how a local inference/control node connects to robot or sensor endpoints, how the runtime can be observed, how scenarios can be benchmarked, and how hardware targets can be replaced.
-
-The project is not an LLM serving framework like vLLM or Ollama. It is a reference validation workflow for edge Physical AI experiments that combine:
+OpenPAVE connects pieces that are often evaluated separately into one verifiable Physical AI workflow:
 
 - local VLM/VLA inference
 - robot or sensor endpoints
-- normalized intent
-- runtime control
-- robot adapters
+- robot middleware
+- normalized intent and control contracts
 - command and state feedback
 - observability UI
-- benchmark scenarios
+- demo runbooks
+- benchmark and validation paths
+
+The project is not an LLM serving framework like vLLM or Ollama. OpenPAVE is an early reference validation and experimentation workflow that helps developers catalogue, run, observe, compare, and optionally integrate Physical AI demos at different depths.
+
+## What OpenPAVE Provides
+
+OpenPAVE supports several levels of demo integration:
+
+```text
+Level 0: Catalogue only
+Level 1: Launch / status / result wrapper
+Level 2: State or result bridge
+Level 3: Normalized intent / control contract
+Level 4: Benchmark integration
+```
+
+A demo can remain independently runnable while OpenPAVE provides a common place to describe it, link validation notes, launch or observe it, collect high-level results, or connect it through deeper runtime and benchmark contracts.
 
 ## Demo
 
@@ -21,23 +35,14 @@ Recorded runs of the OpenPAVE brain-body workflow, by project version:
 
 - **v0.9 — Real-time VLA on DGX Spark: RPi quadruped with LLaVA-7B** — [watch](https://youtu.be/kRiXri0te0g?si=iOhW0d2SSSP6zT4V)
   Early end-to-end proof of concept: an LLaVA-7B vision-language model on a DGX Spark drives
-  an RPi-based quadruped (PuppyPi) in real time — the brain-side inference → body-side motion
-  loop that OpenPAVE later formalized into normalized intent, robot adapters, and feedback.
+  an RPi-based quadruped (PuppyPi) in real time. This brain-side inference to body-side motion
+  loop later became the first OpenPAVE deep-integration reference path.
 
 - **v1.3 — Stage 3 runtime** — [watch](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
-  A short from the v1.3 (Stage 3) iteration — the runtime that hardened into Validated
-  Baseline v1.0: the intent ingress → control daemon → PuppyPi adapter control path with the
-  `/pave` console and command/state feedback.
+  A short from the v1.3 iteration that hardened into Validated Baseline v1.0: intent ingress,
+  control daemon, PuppyPi adapter, `/pave` console, and command/state feedback.
 
 ## Validated Baseline v1.0
-
-The current repository is organized around:
-
-```text
-OpenPAVE Validated Baseline v1.0
-```
-
-This baseline proves a reproducible local brain-body workflow before optimizing transport, control latency, and hardware coverage.
 
 The first validated target is:
 
@@ -45,7 +50,21 @@ The first validated target is:
 PuppyPi + DGX
 ```
 
-PuppyPi + DGX is a validated target, not the project boundary. Planned future targets include SO-101 robot arm + camera + DGX, Raspberry Pi ROS 2 car/camera + DGX or Thor, and additional robot/sensor endpoints with different ROS 2 communication patterns.
+PuppyPi + DGX is the first validated deep-integration example, not the project boundary. It demonstrates the full brain/control reference path:
+
+```text
+local VLM/VLA inference
+-> normalized intent
+-> Control Daemon
+-> Robot Adapter
+-> ROS 2 execution
+-> command/state feedback
+-> benchmark validation
+```
+
+Other demos do not need to adopt this full path. They can join OpenPAVE at lighter integration levels, such as catalogue-only entries, launch/status wrappers, or result summaries.
+
+Planned future targets include SO-101 robot arm + camera, Raspberry Pi ROS 2 car/camera, and additional robot/sensor endpoints with different middleware and communication patterns.
 
 OpenPAVE targets the Armv9 brain-side platform family (DGX today; Thor and other Armv9 edge nodes planned), not a single vendor or SKU.
 
@@ -78,7 +97,7 @@ flowchart LR
     Result --> Bench
 ```
 
-Current implementation:
+Current validated implementation:
 
 - Brain side: DGX (Armv9 Grace CPU + Nvidia GPU) running vLLM, OpenPAVE runtime services, and the `/pave` console.
 - Body side: PuppyPi running ROS 2 `puppy_control`.
@@ -116,18 +135,15 @@ Open:
 http://127.0.0.1:8090/pave
 ```
 
-## Runtime Profiles
+## Demo Integration
 
-OpenPAVE uses repo-level environment profiles:
+Start with:
 
-```text
-configs/mock.env
-configs/puppypi.env
-```
+- [Demo Integration Levels](docs/demo-integration-levels.md)
+- [Demo Catalogue](docs/demo-catalog.md)
+- [Contributing Demos](docs/contributing-demos.md)
 
-`mock.env` validates the runtime without robot hardware.
-
-`puppypi.env` routes commands through the PuppyPi adapter and expects the robot-side ROS 2 controller and local VLM backend to be running.
+These documents describe how Physical AI demos can join OpenPAVE at different levels, from a catalogue entry to launch/status hooks, state/result bridges, normalized intent control, or benchmark integration.
 
 ## Benchmarking
 
@@ -153,7 +169,8 @@ Start here:
 
 - [Documentation Index](docs/index.md)
 - [Validated Baseline Guide](docs/validated-baseline.md)
-- [PuppyPi + DGX Target](docs/targets/puppypi-dgx.md)
+- [Demo Integration Levels](docs/demo-integration-levels.md)
+- [Demo Catalogue](docs/demo-catalog.md)
 - [Further Work](docs/further-work.md)
 
 Core specs:
@@ -164,8 +181,7 @@ Core specs:
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
 - [Benchmark Harness](docs/benchmark-harness.md)
-- [Prompts and Scenarios](docs/prompts-and-scenarios.md)
-- [OpenPAVE Console](docs/pave-console.md)
+- [Ecosystem Validation Map](docs/ecosystem-validation-map.md)
 - [Third-Party Notices](docs/third-party-notices.md)
 
 Historical material is kept under:
