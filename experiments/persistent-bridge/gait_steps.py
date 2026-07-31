@@ -30,12 +30,16 @@ def _set_fields(msg, data: dict) -> None:
         setattr(msg, key, value)
 
 
-def execute_steps(node, steps: list[dict], clients: dict[Any, Any]) -> list[dict]:
+def execute_steps(
+    node, steps: list[dict], clients: dict[Any, Any], default_timeout: float = 5.0
+) -> list[dict]:
     """Run ``steps`` on ``node``, reusing service clients / publishers cached in ``clients``.
 
     ``clients`` is keyed by ``("svc", name)`` / ``("pub", name)`` and owned by the caller — pass
     the same dict across calls to reuse connections (bridge), or a fresh dict each time to force a
-    cold start (the cold baseline in the benchmark).
+    cold start (the cold baseline in the benchmark). ``default_timeout`` (seconds) is used for a
+    service step that doesn't set its own ``timeout`` — the bridge derives it from the request's
+    ``timeout_ms``.
     """
     results: list[dict] = []
     for step in steps:
@@ -64,7 +68,7 @@ def execute_steps(node, steps: list[dict], clients: dict[Any, Any]) -> list[dict
 
         elif op == "service":
             svc = step["service"]
-            timeout = float(step.get("timeout", 5.0))
+            timeout = float(step.get("timeout", default_timeout))
             key = ("svc", svc)
             cli = clients.get(key)
             if cli is None:

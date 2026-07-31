@@ -36,11 +36,8 @@ class BridgeClient:
         self.buf = bp.LineBuffer()
         self._seq = 0
 
-    def run_steps(self, steps: list[dict], mode: str = bp.MODE_SYNC, timeout: float = 15.0):
-        """Send one request, block until its result. Returns (ok, steps). Raises on bridge error."""
-        self._seq += 1
-        req_id = f"c{self._seq}"
-        self.sock.sendall(bp.encode(bp.make_request(req_id, steps, mode)))
+    def _await(self, req_id: str, want: str, timeout: float) -> dict:
+        """Read until the message with this id and type ``want`` (or an error) arrives."""
         self.sock.settimeout(timeout)
         while True:
             data = self.sock.recv(65536)
@@ -49,17 +46,42 @@ class BridgeClient:
             for line in self.buf.feed(data):
                 msg = bp.decode(line)
                 if msg.get("id") != req_id:
-                    continue
+                    continue  # (async: progress for other ids would be skipped here)
                 mtype = msg.get("type")
-                if mtype == bp.T_RESULT:
-                    return bool(msg.get("ok")), msg.get("steps", [])
+                if mtype == want:
+                    return msg
                 if mtype == bp.T_ERROR:
-                    raise RuntimeError(msg.get("message", "bridge error"))
-                # --- async hook: T_ACCEPTED / T_PROGRESS would be handled here (loop again
-                #     until T_RESULT). Sync B1 never sees them, so we just keep reading. ---
+                    raise BridgeError(msg.get("message", "bridge error"), msg.get("code"))
+                # --- async hook: T_ACCEPTED / T_PROGRESS handled here (keep reading until want) ---
+
+    def run_steps(self, steps: list[dict], mode: str = bp.MODE_SYNC,
+                  timeout: float = 15.0, timeout_ms: int | None = None):
+        """Send one request, block until its result. Returns (ok, steps). Raises BridgeError."""
+        self._seq += 1
+        req_id = f"c{self._seq}"
+        self.sock.sendall(bp.encode(bp.make_request(req_id, steps, mode, timeout_ms=timeout_ms)))
+        msg = self._await(req_id, bp.T_RESULT, timeout)
+        return bool(msg.get("ok")), msg.get("steps", [])
+
+    def ping(self, timeout: float = 5.0) -> tuple[bool, dict]:
+        """Probe the bridge. Returns (ready, detail). Raises on no/failed reply — a B2 adapter
+        turns any failure here into 'fall back to the docker-exec path (A)'."""
+        self._seq += 1
+        ping_id = f"p{self._seq}"
+        self.sock.sendall(bp.encode(bp.make_ping(ping_id)))
+        msg = self._await(ping_id, bp.T_PONG, timeout)
+        return bool(msg.get("ready")), msg.get("detail", {})
 
     def close(self) -> None:
         self.sock.close()
+
+
+class BridgeError(RuntimeError):
+    """A bridge ``error`` response. ``code`` is machine-readable (see bridge_protocol E_*)."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(f"[{code}] {message}" if code else message)
+        self.code = code
 
 
 def main() -> None:

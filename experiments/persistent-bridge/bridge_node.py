@@ -65,19 +65,29 @@ class Bridge:
                     self._on_line(conn, line)
         self.log.info("client disconnected")
 
+    def _services_ready(self) -> bool:
+        """Whether every already-created service client is connected (best-effort readiness)."""
+        svc_clients = [c for key, c in self.clients.items() if key[0] == "svc"]
+        return all(c.service_is_ready() for c in svc_clients)  # True (vacuously) before first use
+
     def _on_line(self, conn: socket.socket, line: str) -> None:
         req_id = None
         try:
             msg = bp.decode(line)
             req_id = msg.get("id")
-            req_id, steps = bp.validate_request(msg)
-            results = execute_steps(self.node, steps, self.clients)
+            if msg.get("type") == bp.T_PING:  # liveness/readiness probe (B2 fallback uses this)
+                conn.sendall(bp.encode(bp.make_pong(
+                    req_id, ready=True, detail={"services_ready": self._services_ready()})))
+                return
+            req_id, steps, timeout_ms = bp.validate_request(msg)
+            default_timeout = timeout_ms / 1000.0 if timeout_ms else 5.0
+            results = execute_steps(self.node, steps, self.clients, default_timeout=default_timeout)
             ok = all(r["rc"] == 0 for r in results)
             conn.sendall(bp.encode(bp.make_result(req_id, ok, results)))
             self.log.info(f"req {req_id} · {len(steps)} steps · ok={ok}")
         except bp.ProtocolError as exc:
-            conn.sendall(bp.encode(bp.make_error(req_id, str(exc))))
-            self.log.warn(f"rejected req {req_id}: {exc}")
+            conn.sendall(bp.encode(bp.make_error(req_id, str(exc), exc.code)))
+            self.log.warn(f"rejected req {req_id}: [{exc.code}] {exc}")
 
     def shutdown(self) -> None:
         self.node.destroy_node()

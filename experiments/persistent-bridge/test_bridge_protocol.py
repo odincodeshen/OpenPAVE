@@ -39,19 +39,27 @@ class ValidateRequestTests(unittest.TestCase):
             {"op": "service", "service": "/x", "type": "std_srvs/srv/Empty", "data": {}},
             {"op": "sleep", "sec": 0.2},
         ])
-        req_id, steps = bp.validate_request(req)
+        req_id, steps, timeout_ms = bp.validate_request(req)
         self.assertEqual(req_id, "r1")
         self.assertEqual(len(steps), 2)
+        self.assertIsNone(timeout_ms)
+
+    def test_timeout_ms_passed_through(self):
+        req = bp.make_request("r1", [{"op": "sleep", "sec": 0}], timeout_ms=2500)
+        _, _, timeout_ms = bp.validate_request(req)
+        self.assertEqual(timeout_ms, 2500)
 
     def test_async_mode_reserved_but_rejected(self):
         req = bp.make_request("r2", [{"op": "sleep", "sec": 0}], mode=bp.MODE_ASYNC)
-        with self.assertRaises(bp.ProtocolError):
+        with self.assertRaises(bp.ProtocolError) as ctx:
             bp.validate_request(req)
+        self.assertEqual(ctx.exception.code, bp.E_UNSUPPORTED_MODE)
 
     def test_action_op_reserved_but_rejected_in_sync(self):
         req = bp.make_request("r3", [{"op": bp.OP_ACTION, "action": "/nav"}])
-        with self.assertRaises(bp.ProtocolError):
+        with self.assertRaises(bp.ProtocolError) as ctx:
             bp.validate_request(req)
+        self.assertEqual(ctx.exception.code, bp.E_UNSUPPORTED_OP)
 
     def test_missing_id_or_bad_steps(self):
         with self.assertRaises(bp.ProtocolError):
@@ -62,6 +70,30 @@ class ValidateRequestTests(unittest.TestCase):
     def test_wrong_type(self):
         with self.assertRaises(bp.ProtocolError):
             bp.validate_request(bp.make_result("r", True, []))
+
+
+class VersionPingErrorTests(unittest.TestCase):
+    def test_all_builders_stamp_version(self):
+        for msg in (bp.make_request("r", []), bp.make_result("r", True, []),
+                    bp.make_error("r", "x"), bp.make_ping("p"), bp.make_pong("p", True)):
+            self.assertEqual(msg["version"], bp.PROTOCOL_VERSION)
+
+    def test_error_has_ok_false_and_code(self):
+        err = bp.make_error("r", "nope", code=bp.E_UNSUPPORTED_MODE)
+        self.assertFalse(err["ok"])
+        self.assertEqual(err["code"], bp.E_UNSUPPORTED_MODE)
+
+    def test_decode_bad_json_carries_code(self):
+        with self.assertRaises(bp.ProtocolError) as ctx:
+            bp.decode("{nope")
+        self.assertEqual(ctx.exception.code, bp.E_BAD_JSON)
+
+    def test_ping_pong_shape(self):
+        self.assertEqual(bp.make_ping("p1")["type"], bp.T_PING)
+        pong = bp.make_pong("p1", ready=True, detail={"services_ready": True})
+        self.assertEqual(pong["type"], bp.T_PONG)
+        self.assertTrue(pong["ready"])
+        self.assertTrue(pong["detail"]["services_ready"])
 
 
 class LineBufferTests(unittest.TestCase):

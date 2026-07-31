@@ -54,6 +54,10 @@ Cleanup: `docker rm -f openpave-b1`.
 **~190× faster**, and far more consistent. Every request returned `ok=True`; the bridge log shows
 5 consecutive requests handled on the one connection.
 
+The protocol also carries `version`, request `timeout_ms`, machine-readable error `code`, and a
+`ping/pong` liveness probe (for B2 fallback). Re-measured after adding those fields: sync STOP
+still ~1.9 ms, and `ping → ready=True, {services_ready: true}`.
+
 ### Reading
 
 - The bridge pays node startup + service **discovery once** (at startup). After that each STOP is
