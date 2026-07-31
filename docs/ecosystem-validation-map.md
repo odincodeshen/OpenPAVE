@@ -54,6 +54,10 @@ Experimental:
 
 - zenoh brain/body transport MVE
 - local PuppyPi adapter over co-located ROS 2 execution
+- **persistent body-side bridge** (`puppypi_bridge`): long-running ROS 2 clients over a localhost
+  socket, with automatic fallback to the CLI path; result metadata records path + per-path latency
+  (which answers "can execution latency be separated from dispatch latency?" — real PuppyPi HOME
+  −66%, STOP p95 −89%)
 
 Validation questions:
 

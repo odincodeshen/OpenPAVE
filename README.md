@@ -74,7 +74,7 @@ OpenPAVE targets the Armv9 brain-side platform family (DGX today; Thor and other
 flowchart LR
     subgraph Body["Body Side: Robot / Sensor Endpoint"]
         Sensors["Sensors\ncamera, raw USB, ROS 2 image, future lidar/audio"]
-        RobotCtl["Robot-side control\nROS 2 services/topics or future bridge"]
+        RobotCtl["Robot-side control\nROS 2 services/topics; persistent bridge (experimental)"]
     end
 
     subgraph Brain["Brain Side: Local Inference / Control Node"]
@@ -158,7 +158,7 @@ The current benchmark harness validates the control path. Future work will add s
 
 ## Current Limitations
 
-- The current PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls. This is simple and reproducible, but not the final low-latency robot control plane.
+- The **default** PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls — simple and reproducible. An experimental low-latency control plane now exists (`ROBOT_ADAPTER=puppypi_bridge`, a persistent body-side bridge with automatic fallback to the CLI path; real PuppyPi STOP p95 −89%), but it is not yet the default. See `experiments/persistent-bridge/`.
 - ROS 2 over Wi-Fi and DDS/RMW behavior can vary by machine, network, container image, and firewall settings. The validated default path is `rmw_fastrtps_cpp`; `rmw_cyclonedds_cpp` is documented as an environment-specific workaround.
 - The `/pave` console currently lives in the OpenPAVE-maintained `live-vlm-webui` fork. A native OpenPAVE console is planned.
 - Camera/sensor replay and full end-to-end VLM/VLA quality benchmarking are future work.

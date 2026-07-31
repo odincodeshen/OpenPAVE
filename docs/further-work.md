@@ -46,6 +46,32 @@ This document tracks validated work, experimental work, and planned feature work
 - [ ] zenoh is not yet the default OpenPAVE runtime transport.
 - [ ] Transport latency, reconnect behavior, and failure reporting need benchmark coverage.
 
+### Capability Model (graduated into the runtime)
+
+- [x] The command model is now **capability-declarative** (`{action, params}` + adapters declare
+  `capabilities`), graduated from experiments into `pave_runtime.capability_schema` and
+  `control_daemon.adapters`. The fixed `STOP/TROT/HOME/MOVE` enum is kept as a translator.
+- [x] One runtime model spans **locomotion, manipulation, and sensing** — validated on real
+  hardware with `mock_arm` (manipulation) and a real USB `camera` (sensing) over the same seam,
+  alongside PuppyPi locomotion.
+- [x] Camera sensing uses a **control-plane / data-plane split** (small metadata on the command
+  channel; the JPEG on a dedicated compressed topic).
+- [ ] A machine-readable capability manifest per demo is still future work.
+
+### Persistent Robot Control Plane (implemented; experimental, not default)
+
+- [x] **A** — batch each PuppyPi action into one `docker exec` gait runner instead of N per-call
+  `ros2` CLIs (real PuppyPi STOP −45%).
+- [x] **B1** — a persistent bridge (long-running rclpy node + localhost socket, service clients
+  reused); mock-validated ~190×.
+- [x] **B2** — `ROBOT_ADAPTER=puppypi_bridge` (experimental, **not the default**; `puppypi_local`
+  stays validated) tries the bridge, else falls back to the Docker-CLI path with a cooldown;
+  real PuppyPi HOME −66%, STOP p50 −81% / p95 −89%, fallback verified. Bridge server and
+  `start_bridge.sh` in `experiments/persistent-bridge/`; runs `-u ubuntu` (FastDDS SHM is per-user).
+- [x] Result metadata records `path` (bridge / fallback_a) + per-path latency, separating dispatch
+  latency from ROS 2 execution latency (the residual ~512 ms is puppy_control's physical re-pose).
+- [ ] Not yet the default; async / long-running (AMR) is a reserved-but-unimplemented protocol path.
+
 ### Demo Integration Model
 
 - [x] OpenPAVE now defines demo integration levels from catalogue-only to benchmark integration.
@@ -68,36 +94,41 @@ This document tracks validated work, experimental work, and planned feature work
 - [ ] Add an SO-101 + camera demo entry and integration plan.
 - [ ] Add a Raspberry Pi ROS 2 car/camera demo entry and integration plan.
 - [ ] Add target metadata to scenarios and benchmark outputs.
-- [ ] Extend the adapter contract for target-specific capabilities beyond `STOP`, `TROT`, `HOME`, and `MOVE`.
+- [x] Extend the adapter contract for target-specific capabilities beyond `STOP`, `TROT`, `HOME`, and `MOVE`. (capability model)
 
 ### Capability Model
 
-- [ ] Define how robot/sensor endpoints declare capabilities.
-- [ ] Capture motion, manipulation, sensing, state feedback, safety stop, and benchmark support.
-- [ ] Map normalized intent to target-specific capabilities.
+> **Core implemented and graduated into the runtime** — see *Experimental Now*. Status:
+
+- [x] Define how robot/sensor endpoints declare capabilities. (adapters expose `capabilities`)
+- [x] Capture motion, manipulation, sensing, and safety stop. (locomotion / manipulation / sensing + common stop/estop/home)
+- [x] Map normalized intent to target-specific capabilities. (`intent_to_capability_action`)
 - [ ] Use capabilities to decide which scenarios are valid for each demo.
 
 ### Sensor and VLA Input Path
 
 - [ ] Define a sensor endpoint contract that is not camera-only.
-- [ ] Support raw USB camera input for robot-arm validation.
+- [x] Support raw USB camera input for robot-arm validation. (camera MVE: `get_image` over the seam)
 - [ ] Support ROS 2 image stream input for Raspberry Pi car/camera validation.
-- [ ] Add high-bandwidth sensor/data plane documentation.
+- [x] Add high-bandwidth sensor/data plane documentation. (control-plane / data-plane split, camera MVE)
 - [ ] Add scenario support for replayed sensor input.
 - [ ] Add benchmark support for VLM/VLA output quality, not just command-path success.
 
 ### Persistent Robot Control Plane
 
-- [ ] Define a persistent robot bridge contract for lower-latency robot command execution.
-- [ ] Implement a long-running ROS 2 bridge process or container that owns ROS 2 service clients, publishers, and command state.
-- [ ] Add a new adapter mode such as `ROBOT_ADAPTER=puppypi_ros2_bridge`.
-- [ ] Route Control Daemon commands to the bridge over a stable local transport such as HTTP, gRPC, or Unix socket.
-- [ ] Avoid spawning a new Docker container for every ROS 2 command in the bridge path.
-- [ ] Add timeout, cancellation, heartbeat, and error propagation semantics to the bridge contract.
-- [ ] Report bridge-side command timestamps so benchmarks can separate OpenPAVE dispatch latency from ROS 2 execution latency.
-- [ ] Support compound command sequences without shelling out for every step.
-- [ ] Document when to use Docker CLI adapter versus persistent bridge adapter.
-- [ ] Validate the persistent bridge against PuppyPi first, then generalize the contract for other ROS 2 robot/sensor endpoints.
+> **Implemented and real-robot validated (A / B1 / B2)** — see the summary under *Experimental Now*.
+> Status of the original items:
+
+- [x] Define a persistent robot bridge contract for lower-latency robot command execution.
+- [x] Implement a long-running ROS 2 bridge process that owns ROS 2 service clients and command state.
+- [x] Add a new adapter mode (`ROBOT_ADAPTER=puppypi_bridge`).
+- [x] Route Control Daemon commands to the bridge over a stable local transport (TCP localhost; Unix socket supported).
+- [x] Avoid spawning a new Docker container for every ROS 2 command in the bridge path.
+- [x] Add timeout, cooldown, and error propagation to the bridge contract. (cancellation / heartbeat still reserved)
+- [x] Report path + per-path latency so benchmarks separate dispatch latency from ROS 2 execution latency.
+- [x] Support compound command sequences without shelling out for every step.
+- [x] Validate the persistent bridge against PuppyPi first (real robot, `.17`).
+- [ ] Document when to use the Docker-CLI adapter versus the persistent bridge adapter; generalize the contract to other ROS 2 endpoints.
 
 ### Brain-Body Transport Upgrade
 
@@ -120,7 +151,10 @@ This document tracks validated work, experimental work, and planned feature work
 
 ## Known Limitations
 
-- The current PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls. This is useful for validation and debugging, but inefficient for repeated, compound, or low-latency robot control.
+- The current **default** PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls — simple and
+  reproducible. An experimental **low-latency path now exists** (`ROBOT_ADAPTER=puppypi_bridge`,
+  persistent bridge; see *Experimental Now*) with automatic fallback to the CLI path, but it is not
+  yet the default.
 - ROS 2 over Wi-Fi and DDS/RMW behavior can vary by machine, network, container image, and firewall settings.
 - The validated default RMW path remains `rmw_fastrtps_cpp`; `rmw_cyclonedds_cpp` is documented as an environment-specific workaround.
 - Current benchmark coverage focuses on control-path validation; full sensor/VLM/VLA quality replay is future work.

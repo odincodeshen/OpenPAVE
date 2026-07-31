@@ -29,9 +29,10 @@ What it demonstrates:
 - `/pave` observability console
 - normalized intent
 - Intent Ingress and Control Daemon
-- PuppyPi robot adapter
+- PuppyPi robot adapter (capability-declarative; locomotion / manipulation / sensing)
 - command result and robot state feedback
 - mock and physical-control-path benchmark flows
+- experimental persistent bridge (`puppypi_bridge`) for low-latency control, with automatic fallback
 
 ## Experimental Demos and Transport MVEs
 
@@ -54,6 +55,22 @@ What it demonstrates:
 - intent downlink and state uplink
 - body-side fail-safe pattern
 - experimental transport path beyond the current validated baseline
+
+### Capability, Sensing, and Persistent-Bridge MVEs
+
+```text
+Status: Experimental (graduated into the runtime; not the default path)
+Integration level: Level 3 control contract + Level 4 latency
+Runbooks: experiments/capability-mve/, experiments/camera-mve/, experiments/persistent-bridge/
+```
+
+What they demonstrate:
+
+- **capability model**: a manipulation-class `mock_arm` runs over the same seam as PuppyPi
+  locomotion with only a new adapter + capability set (now in `pave_runtime` / `control_daemon`)
+- **camera sensing**: a real USB camera `get_image` with a control-plane / data-plane split
+- **persistent bridge** (`puppypi_bridge`): long-running ROS 2 clients over a localhost socket;
+  real PuppyPi HOME −66% / STOP p95 −89%, with automatic fallback to the CLI path
 
 ## Candidate Demos
 

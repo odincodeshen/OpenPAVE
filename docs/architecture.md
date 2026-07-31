@@ -144,13 +144,17 @@ The PuppyPi + DGX baseline demonstrates the deep-integration path. Demos with th
 
 The current PuppyPi target uses ROS 2 communication over the available network path. This is the baseline communication path, not the final optimized brain-body transport layer.
 
-Future work will add an upgraded open-source transport option and benchmark it against the current ROS 2 over Wi-Fi path.
+A **zenoh brain/body transport** has been explored as an MVE (`experiments/zenoh-mve/`, E1a/E1b/E2 + real PuppyPi). An upgraded transport is not yet the default runtime path; latency/reconnect benchmarking is still open.
 
 ### Robot Command Execution
 
-The current `PuppyPiAdapter` uses one-shot Dockerized ROS 2 CLI calls. This is useful for validation and debugging, but inefficient for repeated, compound, or low-latency robot control.
+The **default** `PuppyPiAdapter` uses one-shot Dockerized ROS 2 CLI calls — reproducible and easy to debug.
 
-Future work will add a persistent robot bridge or transport-aware adapter while preserving the Docker CLI path as a fallback.
+An experimental **low-latency path is now implemented and real-robot validated**: a persistent
+body-side bridge (`ROBOT_ADAPTER=puppypi_bridge`) keeps ROS 2 service clients connected and executes
+commands over a localhost socket, **falling back to the Docker-CLI path automatically**. On PuppyPi
+it cut HOME −66% and STOP p95 −89%. It stays experimental (not the default; `puppypi_local` remains
+the validated path). See `experiments/persistent-bridge/`.
 
 ## Interfaces
 
