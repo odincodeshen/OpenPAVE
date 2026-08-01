@@ -64,21 +64,26 @@ ZENOH_CONNECT=tcp/192.168.0.13:7447 python3 neutral_brain.py move_joint '{"joint
   `mock_arm`), `ZENOH_CONNECT` / `ZENOH_LISTEN`
 - same three results: `move_joint` / `grasp` → **completed**, `trot` → **unsupported**
 
-**Real-hardware pipeline** (2026-08-01, PuppyPi `192.168.0.17`, `ROBOT_ADAPTER=puppypi_bridge`)
+**Real-hardware — the real dog moved** (2026-08-01, PuppyPi `192.168.0.17`, `ROBOT_ADAPTER=puppypi_bridge`)
 - brain on DGX `.24` → `neutral_body` on the PuppyPi → `puppypi_bridge` adapter → the B2 bridge
-  (`ping` → ready, `services_ready`, `controller=puppy_control`) → real puppy_control.
-- The whole **seam → adapter → bridge → controller** path carried the command end-to-end: the STOP
-  request reached the live controller and was executed (bridge log: `client connected · req · steps`).
-- The dog did **not** actually re-pose, for a reason **orthogonal to the seam**: the robot had been
-  rebuilt and its motion driver changed — B2's `velocity_move` interface is gone; the box now ships a
-  ROS2 `puppy_control` package (+ a ROS1 one). The gait steps no longer match the driver, so the step
-  returned `ok=False`, and the adapter **correctly fell back and reported `failed / path / reason`**.
-  The seam's contract, fallback, and state reporting all behaved correctly *while a lower layer
-  failed* — wiring the adapter to the new driver is tracked as separate work (see Next #2).
+  (`ping` → ready, `services_ready`, `controller=puppy_control`) → real puppy_control → **the dog moved**.
+- Three locomotion actions, all `path=bridge`, each confirmed by an external camera (a second RPi at `.13`):
+
+  | action | status | latency | camera |
+  |--------|--------|--------:|--------|
+  | HOME   | completed | 516 ms  | splayed low → stood up |
+  | STOP   | completed | 516 ms  | held its stance |
+  | trot   | completed | 1013 ms | front legs lift, body walks forward |
+
+- **The gait steps needed zero changes.** An earlier attempt returned `ok=False` only because the
+  bridge was started in the **wrong container** (`test`, a hiwonder stack lacking these interfaces).
+  The real ROS2 `puppy_control` (container `puppypi_ros2`) exposes `velocity_move` / `go_home` /
+  `set_running` — the same names B2 used. Fix = start the bridge in `puppypi_ros2`; B2's rclpy bridge
+  and gait steps ran unchanged, latency identical to B2 (~516 ms).
 
 **A pure-Python, no-ROS body served the capability contract over raw zenoh — on a single host, across
-two machines (two Python versions), and end-to-end into a real robot's controller.** That is the ②
-result: a non-ROS robot is a first-class OpenPAVE body, and the seam is genuinely neutral — across
+two machines (two Python versions), and end-to-end into a real robot that actually moved.** That is the
+② result: a non-ROS robot is a first-class OpenPAVE body, and the seam is genuinely neutral — across
 hosts, and independent of what the body drives underneath.
 
 ## Reused unchanged
@@ -86,17 +91,17 @@ hosts, and independent of what the body drives underneath.
 - **capability contract** `pave_runtime.capability_schema` + adapters `control_daemon.adapters`.
 - **zenoh** (already in use for the ROS seam) — here as raw zenoh, not rmw_zenoh.
 
-## Status: ②(a) complete
+## Status: ②(a) complete — including real-dog motion
 
-The seam is validated at all three levels — single-host, cross-host, and end-to-end into a real
-robot's controller. **The core ② goal (a non-ROS body over a neutral seam) is met.**
+The seam is validated single-host, cross-host, and end-to-end into a real robot that **actually
+moved** (HOME / STOP / trot, all `path=bridge`, camera-confirmed). **The core ② goal — a non-ROS
+body over a neutral seam — is met, and the neutral seam drives real hardware.**
 
 ## Next
 
 1. ~~**cross-host**~~ — ✅ done (DGX `.24` brain → RPi5 `.13` body, raw-zenoh TCP).
-2. **real dog — actual motion** *(separate work, orthogonal to the seam)* — the pipeline is proven
-   (command reached the live controller); the remaining piece is re-wiring the bridge's gait steps
-   to the PuppyPi's **new ROS2 `puppy_control`** driver (the old `velocity_move` interface is gone).
-   This is an *adapter ↔ driver* task, not a seam change.
+2. ~~**real dog — actual motion**~~ — ✅ done (HOME / STOP / trot on the real PuppyPi via ROS2
+   `puppy_control`; gait steps unchanged — the fix was starting the bridge in `puppypi_ros2`, not
+   `test`).
 3. **option (b)** — swap the transport for device-connect / a neutral bus; `dispatch` + the
    contract stay the same, so it is a transport change, not a rewrite.
