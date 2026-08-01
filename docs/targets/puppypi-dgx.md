@@ -113,6 +113,35 @@ detached, and verifies it responds):
 ./scripts/start_puppy_control.sh
 ```
 
+### ROS 1 / ROS 2 switching — boot default is ROS 1
+
+The PuppyPi **boots into ROS 1** (noetic `puppy_control`, `puppypi` container, auto-start).
+Its **ROS 2** controller (`puppypi_ros2`, humble) is **not** started at boot. Both drive the
+same servo board over one serial bus, so **only one can run at a time** — using ROS 2 first
+requires stopping ROS 1.
+
+OpenPAVE's control plane (rmw_zenoh, the `puppypi_bridge` rclpy bridge) targets **ROS 2**, so
+switch the robot to ROS 2 before an OpenPAVE run. One command does the whole bring-up:
+
+```bash
+./scripts/switch_puppypi_ros2.sh
+```
+
+It runs the validated bring-up: stop ROS 1 (`puppypi`, frees the serial bus) → stop the
+hiwonder `test` stack (frees the bridge's `:8787` and de-noises DDS domain 0) → start ROS 2
+`puppy_control` (`start_puppy_control.sh`) → start the OpenPAVE bridge inside `puppypi_ros2`
+→ health-ping it. **The dog stands up when the controller takes over — place it safely first.**
+
+**Go back to ROS 1**: reboot (boot default is ROS 1), or
+`docker stop puppypi_ros2 && docker start puppypi`.
+
+Why "boot ROS 1, switch on demand" (option 乙): keep the box's out-of-the-box ROS 1 demos
+(e.g. the joystick node) working by default, while OpenPAVE runs on the still-supported ROS 2
+line (noetic is EOL 2025-05) — without deleting either stack. Validated 2026-08-01: over this
+ROS 2 path the neutral seam drove `HOME` / `STOP` / `trot` / `move` / `estop` on the real
+robot, `path=bridge`, gait steps unchanged. The earlier failure was only the bridge running in
+the wrong container (`test`); the fix is starting it in `puppypi_ros2` (this script does that).
+
 ## Physical Safety
 
 For physical robot runs:

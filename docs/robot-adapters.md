@@ -90,6 +90,10 @@ if the bridge is unavailable. STOP uses a short bridge timeout; results record `
 (`bridge` / `fallback_a`) + latency. Real PuppyPi: HOME −66%, STOP p95 −89%. **Not the default** —
 `puppypi_local` stays the validated path. See `experiments/persistent-bridge/`.
 
+**Robot bring-up:** the bridge needs the PuppyPi on **ROS 2** first — the box boots into ROS 1, so
+run `scripts/switch_puppypi_ros2.sh` on the robot to switch. See
+[PuppyPi + DGX target → ROS 1 / ROS 2 switching](targets/puppypi-dgx.md#ros-1--ros-2-switching--boot-default-is-ros-1).
+
 ### MockArmAdapter
 
 `MockArmAdapter` (`ROBOT_ADAPTER=mock_arm`) is a **manipulation-class** mock: it declares

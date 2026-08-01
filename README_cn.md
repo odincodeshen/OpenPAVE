@@ -156,6 +156,7 @@ python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 ## Current Limitations
 
 - 目前 **default** 的 PuppyPi command path 使用 Dockerized one-shot ROS 2 CLI calls，簡單且可重現。現在已有一條 experimental 的 low-latency control plane（`ROBOT_ADAPTER=puppypi_bridge`，常駐 body-side bridge，並自動 fallback 回 CLI path；真機 PuppyPi STOP p95 −89%），但尚未成為 default。見 `experiments/persistent-bridge/`。
+- 目前 **default** 的 brain↔body seam 是 ROS-native（`rmw_zenoh`）。現在已有一條 experimental 的**中性、非 ROS seam**（raw zenoh + capability JSON）：一個完全不含 ROS 的純 Python body 也能成為一等公民。已在**單機**、**跨主機**（兩台機器、兩個 Python 版本）、以及**端到端打通真機 controller** 三個層級驗證。屬 experimental，尚未成為 default。見 `experiments/neutral-seam/`。
 - ROS 2 over Wi-Fi 與 DDS/RMW 行為可能因 machine、network、container image 與 firewall settings 而不同。目前 validated default path 是 `rmw_fastrtps_cpp`；`rmw_cyclonedds_cpp` 已記錄為 environment-specific workaround。
 - `/pave` console 目前仍位於 OpenPAVE-maintained `live-vlm-webui` fork。未來規劃 OpenPAVE-native console。
 - Camera/sensor replay 與完整 end-to-end VLM/VLA quality benchmarking 是 future work。

@@ -159,6 +159,7 @@ The current benchmark harness validates the control path. Future work will add s
 ## Current Limitations
 
 - The **default** PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls — simple and reproducible. An experimental low-latency control plane now exists (`ROBOT_ADAPTER=puppypi_bridge`, a persistent body-side bridge with automatic fallback to the CLI path; real PuppyPi STOP p95 −89%), but it is not yet the default. See `experiments/persistent-bridge/`.
+- The **default** brain↔body seam is ROS-native (`rmw_zenoh`). An experimental **neutral, non-ROS seam** now exists (raw zenoh + capability JSON): a pure-Python body with no ROS joins as a first-class body. Validated single-host, cross-host (two machines, two Python versions), and end-to-end into a real robot's controller. It is experimental, not the default. See `experiments/neutral-seam/`.
 - ROS 2 over Wi-Fi and DDS/RMW behavior can vary by machine, network, container image, and firewall settings. The validated default path is `rmw_fastrtps_cpp`; `rmw_cyclonedds_cpp` is documented as an environment-specific workaround.
 - The `/pave` console currently lives in the OpenPAVE-maintained `live-vlm-webui` fork. A native OpenPAVE console is planned.
 - Camera/sensor replay and full end-to-end VLM/VLA quality benchmarking are future work.
