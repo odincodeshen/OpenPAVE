@@ -64,10 +64,26 @@ DEVICE_CONNECT_ALLOW_INSECURE=true python3 openpave_agent.py --estop            
 **Same capability contract, same `dispatch`, now device-connect-native** — each capability selector-addressable,
 fleet e-stop by `function(estop)`. That is B's payoff over A.
 
+## Validated on the real dog (2026-08-02, PuppyPi `192.168.0.17`, `ROBOT_ADAPTER=puppypi_bridge`, external camera)
+
+Same driver with `ROBOT_ADAPTER=puppypi_bridge` on the PuppyPi (after `switch_puppypi_ros2.sh`), brain in
+D2D on the box. All `path=bridge`, latency identical to ②a / B2, each confirmed by an external camera (RPi `.13`):
+
+| brain | addressing | result |
+|-------|-----------|--------|
+| home | `invoke device(...).function(home)` | completed · 516 ms · stood to home pose |
+| estop | **`broadcast("function(estop)")`** | completed · 515 ms · **label-addressed, no device id** |
+| trot | `invoke device(...).function(trot)` | completed · 1013 ms · walked (gait) |
+| stop | `invoke device(...).function(stop)` | completed · 514 ms · stood |
+
+**Same body + bridge + adapter as ②a's real dog — only the upper seam changed (raw zenoh → device-connect);
+contract and latency unchanged.** `broadcast("function(estop)")` drove the real dog's e-stop **by label**,
+which the A-version single `execute` cannot do.
+
 ## Next
 
-1. **real dog** — driver with `ROBOT_ADAPTER=puppypi_bridge` on the PuppyPi (after `switch_puppypi_ros2.sh`);
-   brain `invoke("device(...).function(home/trot/move)")`, external camera confirms.
+1. ~~**real dog**~~ — ✅ done (home / estop / trot / stop on the real PuppyPi, `path=bridge`,
+   camera-confirmed; see *Validated on the real dog* above).
 2. **multi-robot** — a 2nd body + `broadcast(..., fire_at=)` for synchronized actuation (5-10 ms).
 3. **fabric** — device-connect server (registry + commissioning + dashboard); contract unchanged.
 4. **fine-grained signatures** (optional) — generate per-capability param schemas from the adapter's
