@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""OpenPAVE capability body as a Device Connect device — todo ②(b).
+"""OpenPAVE capability body as a Device Connect device — todo ②(b), **option B** (labeled RPCs).
 
-Wraps an OpenPAVE `CapabilityAdapter` as a device-connect `DeviceDriver`: the **same**
-capability contract (`{action, params}` -> state) the raw-zenoh neutral seam (②a) validated,
-now carried over the **device-connect** transport (zenoh / NATS / MQTT backends). The
-body-endpoint dispatch is byte-for-byte the same as ②a — only the transport differs. That is
-the whole point of ②(b): swap the transport, keep the contract.
+Each OpenPAVE capability is exposed as its **own labeled `@rpc`**, generated dynamically from
+`adapter.capabilities`, so the device-connect selector grammar addresses them natively:
+`function(estop)` (fleet e-stop), `function(safety:critical)`, `device(category:robot).function(...)`,
+and `broadcast(..., fire_at=)` for synchronized multi-robot actuation.
 
-With `ROBOT_ADAPTER=mock_arm` this is a **fully non-ROS device** (pure Python). It also
-complements the colleague's read-only PuppyPi device-connect adapter by adding **actuation**
-(their adapter is inspection-only; ours drives the robot through the capability model).
+The dispatch is the **same** capability contract as ②a (raw zenoh) — only the transport differs.
+This is the device-connect integration *path* (see `openpave_deviceconnect.md`); OpenPAVE's core is
+untouched. With `ROBOT_ADAPTER=mock_arm` the whole device is pure Python, no ROS.
 
-Run (D2D, zero infra — zenoh multicast discovers peers):
+Params travel as a `dict` (the adapter validates its own `_required`); the RPC *name* is the
+capability. Fine-grained per-capability signatures are a later optimization.
+
+Run (D2D, zero infra):
   DEVICE_CONNECT_ALLOW_INSECURE=true ROBOT_ADAPTER=mock_arm python3 openpave_device.py
 """
 
@@ -20,12 +22,13 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
 from device_connect_edge import DeviceRuntime
 from device_connect_edge.drivers import DeviceDriver, rpc
-from device_connect_edge.types import DeviceStatus
+from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -35,33 +38,78 @@ from pave_runtime.capability_schema import CapabilityIntentError, normalize_acti
 from control_daemon.adapters import create_robot_adapter
 
 
-def dispatch(adapter, payload: dict) -> dict:
-    """Pure capability dispatch — identical to the ②a neutral seam, so it is transport-agnostic:
-    a `{action, params}` payload in, a state dict out. Rejects unparseable envelopes and actions
-    the adapter doesn't declare."""
+# --- capability semantics -> device-connect labels --------------------------------------------
+_SAFETY_CRITICAL = frozenset({"estop", "stop"})
+_SENSING = frozenset({"get_image"})          # read; everything else is actuation (write)
+
+# adapter name -> device `category` label
+_CATEGORY = {
+    "puppypi": "robot", "puppypi_local": "robot", "puppypi_bridge": "robot", "mock": "robot",
+    "mock_arm": "actuator",
+    "camera_mock": "sensor", "camera_usb": "sensor",
+}
+
+
+def _function_labels(action: str) -> dict[str, str]:
+    """Map a capability's semantics to device-connect well-known function labels, so selectors like
+    `function(estop)` / `function(safety:critical)` / `function(direction:write)` just work."""
+    return {
+        "safety": "critical" if action in _SAFETY_CRITICAL else "informational",
+        "direction": "read" if action in _SENSING else "write",
+    }
+
+
+def dispatch(adapter, action: str, params: dict | None = None) -> dict:
+    """Pure capability dispatch — identical contract to ②a, transport-agnostic:
+    an (action, params) in, a state dict out. Rejects unparseable actions and ones the adapter
+    doesn't declare."""
     try:
-        action = normalize_action_payload(payload, default_source="device-connect")
+        norm = normalize_action_payload(
+            {"action": action, "params": params or {}}, default_source="device-connect"
+        )
     except CapabilityIntentError as exc:
         return {"status": "rejected", "error": str(exc), "updated_at": now_iso()}
-    name = action["action"]
-    base = {"request_id": action["request_id"], "action": name, "updated_at": now_iso()}
+    name = norm["action"]
+    base = {"request_id": norm["request_id"], "action": name, "updated_at": now_iso()}
     if name not in adapter.capabilities:
         return {**base, "status": "unsupported",
                 "error": f"{adapter.name} does not support '{name}'"}
-    result = adapter.execute(name, action["params"])
+    result = adapter.execute(name, norm["params"])
     return {**base, "status": "completed" if result.success else "failed",
             "detail": result.detail, "error": result.error}
 
 
-class OpenPaveBodyDriver(DeviceDriver):
-    """An OpenPAVE capability body over Device Connect. `execute` routes a capability
-    `{action, params}` to the adapter via the same dispatch the ②a seam uses."""
+def _make_capability_rpc(action: str):
+    """Factory: an async method for one capability, wrapped as a labeled `@rpc`. The RPC name is the
+    capability so device-connect selectors address it natively; params travel as a dict."""
+    async def method(self, params: dict | None = None) -> dict[str, Any]:
+        return dispatch(self.adapter, action, params)
 
-    device_type = os.getenv("DEVICE_TYPE", "openpave-body")
+    method.__name__ = action
+    method.__doc__ = f"Run the '{action}' capability.\n\nArgs:\n    params: capability params dict."
+    return rpc(name=action, labels=_function_labels(action))(method)
+
+
+class OpenPaveBodyDriver(DeviceDriver):
+    """OpenPAVE capability body over Device Connect (option B): every capability is a labeled `@rpc`,
+    generated dynamically from `adapter.capabilities`. Same dispatch as the ②a neutral seam."""
 
     def __init__(self) -> None:
         super().__init__()
         self.adapter = create_robot_adapter(os.getenv("ROBOT_ADAPTER", "mock_arm"))
+        self.device_type = os.getenv("DEVICE_TYPE", "openpave-body")
+        self._category = _CATEGORY.get(self.adapter.name, "actuator")
+        self.labels = {"category": self._category}
+        # dynamically expose each capability as its own labeled RPC (bound instance method).
+        # collection scans dir(self) for _is_device_function (base.py), so instance methods count.
+        for action in sorted(self.adapter.capabilities):
+            self.__dict__[action] = types.MethodType(_make_capability_rpc(action), self)
+        self._invalidate_caches()
+
+    @property
+    def identity(self) -> DeviceIdentity:
+        return DeviceIdentity(device_type=self.device_type, manufacturer="OpenPAVE",
+                              model=self.adapter.name)
 
     @property
     def status(self) -> DeviceStatus:
@@ -69,21 +117,16 @@ class OpenPaveBodyDriver(DeviceDriver):
 
     @rpc()
     async def list_capabilities(self) -> dict[str, Any]:
-        """List the capabilities this body declares (named list_* to avoid DeviceDriver.capabilities)."""
-        return {"adapter": self.adapter.name, "capabilities": sorted(self.adapter.capabilities)}
-
-    @rpc(labels={"category": "robot", "safety": "actuation"})
-    async def execute(self, action: str, params: dict | None = None) -> dict[str, Any]:
-        """Run one capability action; returns the capability state dict
-        (status completed/failed/unsupported/rejected + detail)."""
-        return dispatch(self.adapter, {"action": action, "params": params or {}})
+        """List the capabilities (each is also exposed as its own labeled RPC)."""
+        return {"adapter": self.adapter.name, "category": self._category,
+                "capabilities": sorted(self.adapter.capabilities)}
 
 
 async def main() -> None:
     driver = OpenPaveBodyDriver()
     device_id = os.getenv("DEVICE_ID", f"openpave-{driver.adapter.name}-d2d")
-    print(f"openpave device up · adapter={driver.adapter.name} · device_id={device_id} · "
-          f"caps={sorted(driver.adapter.capabilities)} · transport=device-connect")
+    print(f"openpave device up · adapter={driver.adapter.name} · category={driver._category} · "
+          f"device_id={device_id} · RPCs={sorted(driver.adapter.capabilities)} (+list_capabilities)")
     await DeviceRuntime(driver=driver, device_id=device_id).run()
 
 

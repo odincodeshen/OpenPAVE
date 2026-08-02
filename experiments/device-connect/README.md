@@ -1,34 +1,44 @@
-# device-connect — the neutral seam over Arm's Device Connect (todo ②, option b)
+# device-connect — the neutral seam over Arm's Device Connect (todo ②, option b · **B: labeled RPCs**)
 
-②(a) proved a **non-ROS body over a neutral seam** using **raw zenoh + capability JSON**. ②(b)
-keeps the **exact same body-endpoint contract** and swaps the transport for **[Device Connect](https://github.com/arm)**
-— Arm's open device↔agent framework (`DeviceDriver` + `@rpc`/`@emit`, backends: zenoh / NATS / MQTT).
-That is the whole point of (b): *swap the transport, keep the contract*.
+②(a) proved a **non-ROS body over a neutral seam** with raw zenoh + capability JSON. ②(b) keeps the
+**same body-endpoint contract** and swaps the transport for **[Device Connect](https://github.com/arm/device-connect)**
+— Arm's open device↔agent framework (`DeviceDriver` + `@rpc`/`@emit`, backends zenoh / NATS / MQTT).
 
-> Design: `neutral_seam_design.md` §6 (workspace root) — "只把 (a) 的 raw zenoh 換成 device-connect 的
-> `@rpc`/`@emit`, 契約不變". The framework lives at `deviceconnect_mhs/` (workspace).
+> This is the **device-connect integration *path***, not a core change. Strategy + concept mapping:
+> `openpave_deviceconnect.md` (workspace root). OpenPAVE's core stays transport-neutral; this path is
+> an optional plugin.
 
-## What this adds vs the colleague's PuppyPi adapter
+## Option B: every capability is its own **labeled** RPC
 
-`deviceconnect_mhs/puppy-device-connect` is **read-only** (ROS inspection RPCs; walking/pose/motor
-control explicitly out of scope). This experiment adds the missing half — **actuation** — by exposing
-OpenPAVE's capability model as a Device Connect device. Same framework, complementary scope.
+The first cut (A) exposed a single `execute(action, params)`. That works, but the agent only sees one
+RPC — it can't use device-connect's **selector grammar** to address individual capabilities. **B** fixes
+that: each capability from `adapter.capabilities` becomes its **own labeled `@rpc`**, generated
+dynamically, so the agent speaks device-connect natively:
+
+```
+device(<id>).function(home)          invoke one capability by name
+function(estop)                       fleet-wide e-stop, label-addressed (no device id)
+function(safety:critical)             every dangerous op across the fleet
+device(category:robot).function(*)    every RPC on the robots
+```
+
+**Dynamic generation is real** (not a workaround): the SDK collects RPCs by scanning `dir(self)` for
+`_is_device_function` and offers `_invalidate_caches()`, so instance-level methods added in `__init__`
+are first-class. Each capability's labels come from its semantics (`estop`/`stop` → `safety:critical`,
+actuation → `direction:write`, sensing → `direction:read`).
 
 ## Files
 
 | File | Role |
 |------|------|
-| `openpave_device.py` | `OpenPaveBodyDriver(DeviceDriver)` — `@rpc execute(action, params)` + `list_capabilities()`; internally `create_robot_adapter` + the **same `dispatch()` as ②a** → `DeviceRuntime.run()` |
-| `openpave_agent.py` | brain: `discover_devices(device_type="openpave-body")` → `invoke_device(id, "execute", params={action, params})` |
-| `test_device.py` | 4 dispatch unit tests (identical cases to ②a — same contract) |
+| `openpave_device.py` | `OpenPaveBodyDriver` — dynamically mounts one labeled `@rpc` per capability (`types.MethodType`), same `dispatch()` as ②a; `DeviceRuntime.run()` |
+| `openpave_agent.py` | brain: `invoke("device(<id>).function(<action>)")`, `broadcast("function(estop)")`, `--discover` |
+| `test_device.py` | 7 tests: dispatch (3) + label mapping (2) + dynamic labeled-RPC generation (2) |
 
-## Contract (unchanged from ②a / design §3)
+## Contract (unchanged from ②a / strategy §3)
 
-```
-invoke  execute(action, params)   ->  {status: completed|failed|unsupported|rejected, detail, ...}
-```
-
-Device Connect wraps the return as `{"success": true, "result": <the capability state>}`.
+Each capability RPC takes `params` (a dict; the adapter validates its own `_required`) and returns the
+capability state. Device Connect wraps it as `{"success": true, "result": <state>}`.
 
 ## Run (D2D, zero infra — zenoh multicast, no broker)
 
@@ -37,32 +47,28 @@ python3.11+ -m venv .venv && . .venv/bin/activate
 pip install <deviceconnect_mhs>/device-connect/packages/device-connect-edge \
             <deviceconnect_mhs>/device-connect/packages/device-connect-agent-tools
 
-# body (fully non-ROS with mock_arm):
-DEVICE_CONNECT_ALLOW_INSECURE=true ROBOT_ADAPTER=mock_arm python3 openpave_device.py
-# brain (another shell):
+DEVICE_CONNECT_ALLOW_INSECURE=true ROBOT_ADAPTER=mock_arm python3 openpave_device.py   # body
+DEVICE_CONNECT_ALLOW_INSECURE=true python3 openpave_agent.py home                       # brain
 DEVICE_CONNECT_ALLOW_INSECURE=true python3 openpave_agent.py move_joint '{"joint":2,"position":0.5}'
-DEVICE_CONNECT_ALLOW_INSECURE=true python3 openpave_agent.py trot     # -> unsupported
+DEVICE_CONNECT_ALLOW_INSECURE=true python3 openpave_agent.py --estop                    # fleet e-stop
 ```
 
-## Validated (2026-08-01, local, D2D zenoh, no broker, no ROS, no dog)
+## Validated (2026-08-02, local, D2D zenoh, no broker, no ROS, no dog)
 
-- `move_joint {joint:2,position:0.5}` → **completed**
-- `grasp` → **completed**; `trot` → **unsupported** (`mock_arm does not support 'trot'`)
-- dispatch unit tests: 4 pass
+- SDK collected **7 labeled RPCs** from `mock_arm` (estop/stop = `safety:critical`, rest = `informational`;
+  all `direction:write`); device `category:actuator`.
+- `invoke device(...).function(home)` → **completed**; `function(move_joint)` `{joint:2,position:0.5}` → **completed**.
+- **`broadcast("function(estop)")` → candidates=1, reply completed** — fleet e-stop by label, no device id.
+- unit tests: 7 pass.
 
-**The same capability contract and the same `dispatch` served a non-ROS body over a completely
-different transport (Device Connect instead of raw zenoh) with zero contract changes** — the seam is
-transport-agnostic, exactly as ②a's design predicted.
-
-## Reused unchanged
-
-- **capability contract** `pave_runtime.capability_schema` + adapters `control_daemon.adapters`.
-- **the ②a dispatch** — copied verbatim; body endpoint logic is identical across transports.
+**Same capability contract, same `dispatch`, now device-connect-native** — each capability selector-addressable,
+fleet e-stop by `function(estop)`. That is B's payoff over A.
 
 ## Next
 
-1. **real dog** — run the driver with `ROBOT_ADAPTER=puppypi_bridge` on the PuppyPi (after
-   `switch_puppypi_ros2.sh`); brain invokes `execute("home"/"trot"/…)`. Seam stays neutral; the
-   adapter drives the B2 bridge internally, same as ②a's real-dog run.
-2. **fabric mode** — swap D2D for a Device Connect server (registry + dashboard) to show the same
-   device on a hosted fabric; contract still unchanged.
+1. **real dog** — driver with `ROBOT_ADAPTER=puppypi_bridge` on the PuppyPi (after `switch_puppypi_ros2.sh`);
+   brain `invoke("device(...).function(home/trot/move)")`, external camera confirms.
+2. **multi-robot** — a 2nd body + `broadcast(..., fire_at=)` for synchronized actuation (5-10 ms).
+3. **fabric** — device-connect server (registry + commissioning + dashboard); contract unchanged.
+4. **fine-grained signatures** (optional) — generate per-capability param schemas from the adapter's
+   `_required` instead of a generic `params` dict.
