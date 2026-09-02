@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pave_runtime.capability_schema import CapabilityIntentError, normalize_action_payload, now_iso
+from pave_runtime.seam import dispatch  # single-source body endpoint (graduated from this experiment)
 from control_daemon.adapters import create_robot_adapter
 
 
@@ -57,26 +57,6 @@ def _function_labels(action: str) -> dict[str, str]:
         "safety": "critical" if action in _SAFETY_CRITICAL else "informational",
         "direction": "read" if action in _SENSING else "write",
     }
-
-
-def dispatch(adapter, action: str, params: dict | None = None) -> dict:
-    """Pure capability dispatch — identical contract to ②a, transport-agnostic:
-    an (action, params) in, a state dict out. Rejects unparseable actions and ones the adapter
-    doesn't declare."""
-    try:
-        norm = normalize_action_payload(
-            {"action": action, "params": params or {}}, default_source="device-connect"
-        )
-    except CapabilityIntentError as exc:
-        return {"status": "rejected", "error": str(exc), "updated_at": now_iso()}
-    name = norm["action"]
-    base = {"request_id": norm["request_id"], "action": name, "updated_at": now_iso()}
-    if name not in adapter.capabilities:
-        return {**base, "status": "unsupported",
-                "error": f"{adapter.name} does not support '{name}'"}
-    result = adapter.execute(name, norm["params"])
-    return {**base, "status": "completed" if result.success else "failed",
-            "detail": result.detail, "error": result.error}
 
 
 def _make_capability_rpc(action: str):
