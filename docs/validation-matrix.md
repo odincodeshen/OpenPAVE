@@ -53,7 +53,8 @@ It should be read as an evidence map, not a marketing compatibility table. A che
 | Mock control-path benchmark | `scripts/run_benchmark.py`, `scripts/summarize_benchmarks.py` | Repeatable software-only validation and gate checks |
 | `/pave` text-only inference | `POST /api/pave/infer` | Validates vLLM/OpenAI-compatible API and UI prompt/result path without camera input |
 | Camera sensing MVE | `experiments/camera-mve/` | Validates control-plane / data-plane split for a USB camera |
-| Seam plugin real-brain latency | Real-brain runs 2026-09-02 (see subsection below) | Across DGX and Radxa O6 brains and both transports, `latency_ms` is ~514 ms (home/stop) and ~1013 ms (trot), all `path=bridge`. The seam and brain add negligible cost; latency is dominated by the body-side bridge / `puppy_control`. |
+| Seam plugin real-brain latency | Real-brain runs 2026-09-02 (see subsection below) | Across DGX and Radxa O6 brains and both transports, `latency_ms` is ~514 ms (home/stop) and ~1013 ms (trot), all `path=bridge`. Latency is dominated by the body-side bridge / `puppy_control`. |
+| Seam latency breakdown | `docs/latency-model.md`, `scripts/seam_bench.py` | Three-segment model: steady-state seam wire ~0.6 ms/action; a ~0.5 s one-time session setup (per-call in the current CLI); execution bridge-dominated. |
 
 ## Real-Brain Seam Plugin Validation (2026-09-02)
 
@@ -72,7 +73,7 @@ Every cell returned `status=completed`, `path=bridge`, and was camera-confirmed 
 
 Findings:
 
-- **The seam is insensitive to both brain and transport.** All four cells land within a few ms of each other; latency is set by the body-side bridge / `puppy_control`, not the seam or the brain. The effective three-segment split is `inference (out of scope here) + seam (~0) + execution (~514 ms home/stop, ~1013 ms trot)`.
+- **The seam is insensitive to both brain and transport.** All four cells land within a few ms of each other; latency is set by the body-side bridge / `puppy_control`, not the seam or the brain. The three-segment split (`inference + seam + execution`, see `docs/latency-model.md`) is: inference out of scope here; **seam steady-state ~0.6 ms** per action, but a **~0.5 s one-time session setup** that the per-call `seam_cli.py send` pays every call (removable with a persistent brain session); execution ~514 ms home/stop, ~1013 ms trot (bridge-dominated).
 - **Cross-host `device_connect` D2D works with zero infrastructure.** DGX and Radxa brains discovered the PuppyPi `openpave-body` over zenoh multicast presence on the LAN — no fabric server, no registry.
 - **Radxa O6 (Armv9) is validated as a real brain** over both transports for the seam control path.
 - **Brain-side deployment is light:** the brain needs only `pave_runtime/` (~9 KB) plus `zenoh` / `device-connect-agent-tools`; `scripts/seam_cli.py` imports the adapter lazily, so the brain does not need `control_daemon`.
