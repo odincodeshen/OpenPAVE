@@ -1,8 +1,8 @@
 # Seam Latency Model (basic)
 
 A first, honest breakdown of where time goes on one brain→body action over the seam. It splits the
-round trip into three segments and fills in what has been measured. This is the "效能基本版" — enough
-to reason about the bottleneck and to reproduce, not a full benchmark suite.
+round trip into three segments and fills in what has been measured. This is the basic performance
+model: enough to reason about the bottleneck and to reproduce, not a full benchmark suite.
 
 ## The three segments
 
