@@ -46,6 +46,14 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 - [Camera MVE](../experiments/camera-mve/README.md): sensing over the seam with a control-plane / data-plane split.
 - [Persistent Bridge](../experiments/persistent-bridge/README.md): low-latency body-side bridge (A / B1 / B2) with fallback; real-robot before/after in `b2_result.md`.
 
+## Runbooks (per config)
+
+Self-contained, first-timer-friendly runbooks — one per validated config combination:
+
+- [DGX → PuppyPi (seam)](runbooks/dgx-puppypi.md) · [Radxa → PuppyPi (seam)](runbooks/radxa-puppypi.md)
+- [DGX → RPi5 camera (seam)](runbooks/dgx-rpicam.md) · [Radxa → RPi5 camera (seam)](runbooks/radxa-rpicam.md)
+- [Gesture control (DGX brain → PuppyPi baseline, ROS 2 path — not the seam)](runbooks/puppypi-gesture-control.md)
+
 ## Releases
 
 - [v1.5.0-seam](releases/v1.5.0-seam.md): seam transport plugin milestone — plugin + real-brain validation matrix (DGX + Radxa O6 × PuppyPi/camera) + config recipes, tooling, latency model, and single-source dispatch.

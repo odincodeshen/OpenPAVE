@@ -197,7 +197,12 @@ scripts/seam_run.sh configs/dgx-puppypi.env brain send home  # 在 brain（DGX�
 
 一個 recipe（`configs/<brain>-<body>.env`）綁定四個維度；換 transport 只需改 `SEAM_TRANSPORT` 一行
 （`raw_zenoh` | `device_connect`）。目前可用的 recipe：`dgx-puppypi`、`radxa-puppypi`（actuator）、
-`dgx-camera`、`radxa-camera`（sensor）。
+`dgx-rpicam`、`radxa-rpicam`（sensor）。
+
+**逐組合 runbook** —— 想要單一組合的自足、對新手友善的操作指南（依賴 → 部署 → body → brain → 預期結果
+→ 清理），見 [`docs/runbooks/`](docs/runbooks/)：上述四個 seam 組合各一份,外加
+[`puppypi-gesture-control.md`](docs/runbooks/puppypi-gesture-control.md)——baseline 手勢控制 demo
+（相機 → VLM → intent → 機器人,走 ROS 2 baseline 路徑,不走 seam）。
 
 ## Benchmarking
 

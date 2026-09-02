@@ -198,7 +198,13 @@ scripts/seam_run.sh configs/dgx-puppypi.env brain send home  # on the brain (DGX
 
 A recipe (`configs/<brain>-<body>.env`) pins the four dimensions; swapping the transport is a
 one-line change to `SEAM_TRANSPORT` (`raw_zenoh` | `device_connect`). Recipes available today:
-`dgx-puppypi`, `radxa-puppypi` (actuator), `dgx-camera`, `radxa-camera` (sensor).
+`dgx-puppypi`, `radxa-puppypi` (actuator), `dgx-rpicam`, `radxa-rpicam` (sensor).
+
+**Per-config runbooks** — for a self-contained, first-timer-friendly walkthrough of one combination
+(dependencies → deploy → body → brain → expected results → cleanup), see
+[`docs/runbooks/`](docs/runbooks/): one file per config for the four seam combinations above, plus
+[`puppypi-gesture-control.md`](docs/runbooks/puppypi-gesture-control.md) for the baseline
+gesture-control demo (camera → VLM → intent → robot, over the ROS 2 baseline path — not the seam).
 
 ## Benchmarking
 

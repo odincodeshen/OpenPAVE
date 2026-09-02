@@ -67,7 +67,7 @@ scripts/seam_run.sh configs/dgx-puppypi.env body    # serve the puppypi_bridge a
 **Sensor (RPi5 camera)** — on the RPi5, from the repo:
 
 ```bash
-scripts/seam_run.sh configs/dgx-camera.env body     # serve get_image (camera_usb) over the seam
+scripts/seam_run.sh configs/dgx-rpicam.env body     # serve get_image (camera_usb) over the seam
 ```
 
 Leave the body running in a dedicated terminal (or under `tmux` / `nohup` for a detached run — a
@@ -84,7 +84,7 @@ scripts/seam_run.sh configs/dgx-puppypi.env brain send home
 scripts/seam_run.sh configs/dgx-puppypi.env brain send trot
 scripts/seam_run.sh configs/dgx-puppypi.env brain send stop
 # sensor:
-scripts/seam_run.sh configs/dgx-camera.env  brain send get_image
+scripts/seam_run.sh configs/dgx-rpicam.env  brain send get_image
 ```
 
 Each prints `state: {... "status": "completed" ...}`. Actuator actions carry
