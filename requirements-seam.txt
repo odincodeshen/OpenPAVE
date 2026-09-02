@@ -1,0 +1,17 @@
+# OpenPAVE seam-path dependencies (brain + body). Validated 2026-09-02 on DGX Spark, Radxa O6,
+# PuppyPi, and RPi5 (all aarch64). Install into the per-host venv used for the seam, e.g.:
+#
+#   <venv>/bin/pip install -r requirements-seam.txt
+#
+# Role split (all three are safe to install together; each side only imports what it needs):
+#   brain  (seam_cli.py send)  : eclipse-zenoh (raw_zenoh) + device-connect-agent-tools (device_connect)
+#   body   (seam_cli.py serve) : eclipse-zenoh (raw_zenoh) + device-connect-edge (device_connect)
+#
+# A USB-camera sensor body (ROBOT_ADAPTER=camera_usb) additionally needs OpenCV — install
+# requirements-seam-camera.txt on that host as well.
+#
+# See docs/seam-validation-runbook.md for the full reproduction flow.
+
+eclipse-zenoh==1.9.0
+device-connect-edge==0.2.5
+device-connect-agent-tools==0.2.5
