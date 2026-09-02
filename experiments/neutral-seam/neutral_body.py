@@ -27,7 +27,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pave_runtime.capability_schema import CapabilityIntentError, normalize_action_payload, now_iso
+from pave_runtime.capability_schema import now_iso
+from pave_runtime.seam import dispatch  # single-source body endpoint (graduated from this experiment)
 from control_daemon.adapters import create_robot_adapter
 
 ACTION_KEY = "openpave/action"        # down: {action, params}
@@ -39,24 +40,6 @@ def _payload_bytes(sample) -> bytes:
         return sample.payload.to_bytes()
     except AttributeError:
         return bytes(sample.payload)
-
-
-def dispatch(adapter, payload: dict) -> dict:
-    """Pure dispatch: a `{action, params}` payload -> a state dict. No zenoh, so it is shared,
-    testable, and transport-agnostic — the same logic a device-connect / bus seam (option b)
-    would reuse. Rejects unparseable envelopes and actions the adapter doesn't declare."""
-    try:
-        action = normalize_action_payload(payload, default_source="neutral-seam")
-    except CapabilityIntentError as exc:
-        return {"status": "rejected", "error": str(exc), "updated_at": now_iso()}
-    name = action["action"]
-    base = {"request_id": action["request_id"], "action": name, "updated_at": now_iso()}
-    if name not in adapter.capabilities:
-        return {**base, "status": "unsupported",
-                "error": f"{adapter.name} does not support '{name}'"}
-    result = adapter.execute(name, action["params"])
-    return {**base, "status": "completed" if result.success else "failed",
-            "detail": result.detail, "error": result.error}
 
 
 def zenoh_config() -> "zenoh.Config":
@@ -84,7 +67,7 @@ def main() -> None:
         except json.JSONDecodeError as exc:
             publish({"status": "rejected", "error": f"bad json: {exc}", "updated_at": now_iso()})
             return
-        state = dispatch(adapter, payload)
+        state = dispatch(adapter, payload.get("action", ""), payload.get("params"))
         publish(state)
         print(f"action {payload.get('action')} -> {state['status']}")
 

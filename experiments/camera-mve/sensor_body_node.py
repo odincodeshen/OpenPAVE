@@ -33,8 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pave_runtime.capability_schema import CapabilityIntentError, normalize_action_payload
 from pave_runtime.intent_schema import now_iso
+from pave_runtime.seam import dispatch  # single-source body endpoint
 from control_daemon.adapters import create_robot_adapter
 
 ACTION_TOPIC = "/openpave/action"
@@ -70,37 +70,23 @@ class SensorBody(Node):
 
     def on_action(self, msg: String) -> None:
         try:
-            action = normalize_action_payload(json.loads(msg.data), default_source="camera-mve")
-        except (json.JSONDecodeError, CapabilityIntentError) as exc:
-            self.get_logger().warn(f"bad action: {exc}")
-            self._publish_state({"status": "rejected", "error": str(exc), "updated_at": now_iso()})
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError as exc:
+            self.get_logger().warn(f"bad json: {exc}")
+            self._publish_state({"status": "rejected", "error": f"bad json: {exc}", "updated_at": now_iso()})
             return
+        # capability logic is the single-source seam.dispatch; this node adds the data plane
+        state = dispatch(self.adapter, payload.get("action", ""), payload.get("params"))
+        self.get_logger().info(f"action {payload.get('action')} -> {state['status']}")
 
-        name = action["action"]
-        base = {"request_id": action["request_id"], "action": name, "updated_at": now_iso()}
-
-        if name not in self.adapter.capabilities:
-            self.get_logger().warn(f"unsupported capability: {name} (adapter={self.adapter.name})")
-            self._publish_state({**base, "status": "unsupported",
-                                 "error": f"{self.adapter.name} does not support '{name}'"})
-            return
-
-        self.get_logger().info(f"action {name} req={action['request_id']} params={action['params']}")
-        result = self.adapter.execute(name, action["params"])
-
-        # data plane: if the sensor produced a frame, publish it on the image topic
+        # data plane: if the sensor produced a frame, publish it on the image topic (before the state)
         jpeg = getattr(self.adapter, "last_jpeg", None)
-        if result.success and jpeg:
+        if state["status"] == "completed" and jpeg:
             self._publish_frame(jpeg)
             self.get_logger().info(f"published frame {len(jpeg)} bytes on {IMAGE_TOPIC}")
 
         # control plane: small metadata only
-        self._publish_state({
-            **base,
-            "status": "completed" if result.success else "failed",
-            "detail": result.detail,
-            "error": result.error,
-        })
+        self._publish_state(state)
 
 
 def main() -> None:

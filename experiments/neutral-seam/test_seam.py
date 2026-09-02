@@ -1,4 +1,7 @@
-"""Unit tests for the neutral-seam dispatch (pure logic — no zenoh, no ROS).
+"""Unit tests for the neutral-seam body endpoint (pure logic — no zenoh, no ROS).
+
+`neutral_body` now imports the single-source `dispatch` from `pave_runtime.seam` (this experiment is
+where it was first written); these tests exercise it through the neutral-seam module.
 
 Run from this dir:  python3 -m unittest test_seam
 """
@@ -22,23 +25,23 @@ class SeamDispatchTests(unittest.TestCase):
 
     def test_supported_action_completed(self):
         with contextlib.redirect_stdout(io.StringIO()):
-            s = dispatch(self.adapter, {"action": "move_joint", "params": {"joint": 2, "position": 0.5}})
+            s = dispatch(self.adapter, "move_joint", {"joint": 2, "position": 0.5})
         self.assertEqual(s["status"], "completed")
         self.assertEqual(s["detail"]["action"], "move_joint")
         self.assertTrue(s["request_id"])
 
     def test_unsupported_action(self):
-        s = dispatch(self.adapter, {"action": "trot"})  # mock_arm has no locomotion
+        s = dispatch(self.adapter, "trot")  # mock_arm has no locomotion
         self.assertEqual(s["status"], "unsupported")
         self.assertIn("trot", s["error"])
 
     def test_missing_action_rejected(self):
-        s = dispatch(self.adapter, {"params": {}})
+        s = dispatch(self.adapter, "")  # blank action envelope
         self.assertEqual(s["status"], "rejected")
 
     def test_bad_params_failed(self):
         with contextlib.redirect_stdout(io.StringIO()):
-            s = dispatch(self.adapter, {"action": "move_joint", "params": {"joint": 2}})  # no position
+            s = dispatch(self.adapter, "move_joint", {"joint": 2})  # no position
         self.assertEqual(s["status"], "failed")
         self.assertIn("position", s["error"])
 
