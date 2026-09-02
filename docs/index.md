@@ -46,6 +46,10 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 - [Camera MVE](../experiments/camera-mve/README.md): sensing over the seam with a control-plane / data-plane split.
 - [Persistent Bridge](../experiments/persistent-bridge/README.md): low-latency body-side bridge (A / B1 / B2) with fallback; real-robot before/after in `b2_result.md`.
 
+## Releases
+
+- [v1.5.0-seam](releases/v1.5.0-seam.md): seam transport plugin milestone — plugin + real-brain validation matrix (DGX + Radxa O6 × PuppyPi/camera) + config recipes, tooling, latency model, and single-source dispatch.
+
 ## Notices
 
 - [Third-Party Notices](third-party-notices.md): third-party source and attribution notes.
