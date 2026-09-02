@@ -47,8 +47,8 @@ Role split (each side only imports what it needs): the brain uses `eclipse-zenoh
 
 ```bash
 # from a full checkout, on your workstation:
-scripts/deploy_seam.sh odin@192.168.0.24  '$HOME/openpave-seam'  '$HOME/.venv-zenoh/bin/python'
-scripts/deploy_seam.sh radxa@192.168.0.5  '$HOME/openpave-seam'  '$HOME/.venv/bin/python'
+scripts/deploy_seam.sh [user]@[ip]  '$HOME/openpave-seam'  '$HOME/.venv-zenoh/bin/python'
+scripts/deploy_seam.sh [user]@[ip]  '$HOME/openpave-seam'  '$HOME/.venv/bin/python'
 ```
 
 This ships `pave_runtime/` + `scripts/{seam_cli.py,seam_run.sh}` + `configs/` + the requirements
