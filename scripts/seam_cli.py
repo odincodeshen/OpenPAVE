@@ -20,7 +20,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root
 
 from pave_runtime.seam import create_seam_transport
-from control_daemon.adapters import create_robot_adapter
 
 
 async def main() -> None:
@@ -28,6 +27,9 @@ async def main() -> None:
     seam = create_seam_transport()  # picks backend from $SEAM_TRANSPORT
 
     if mode == "serve":
+        # body only — the brain (send) never needs an adapter, so import lazily to keep
+        # brain-side deployment light (no control_daemon required to send).
+        from control_daemon.adapters import create_robot_adapter
         adapter = create_robot_adapter(os.getenv("ROBOT_ADAPTER", "mock_arm"))
         await seam.serve(adapter)
 
