@@ -36,7 +36,7 @@ The current implementation should stay easy to reproduce while the project adds 
 - `control_daemon/adapters.py`: `MockAdapter` and `PuppyPiAdapter`.
 - `configs/mock.env`: software-only runtime profile.
 - `configs/puppypi.env`: PuppyPi physical validation profile.
-- `scripts/run_stage3_demo.sh`: runtime launcher.
+- `scripts/run_openpave.sh`: runtime launcher.
 - `scripts/build_puppy_ros2_cli.sh`: custom PuppyPi ROS 2 CLI image builder.
 - `scripts/start_puppy_control.sh`: one-command PuppyPi `puppy_control` bring-up.
 - `scripts/check_puppy_control.sh`: `puppy_control` health check.

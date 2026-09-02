@@ -122,7 +122,7 @@ python3 -m pip install -U pip
 python3 -m pip install -r intent_ingress/requirements.txt
 python3 -m pip install -e ui
 
-OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_openpave.sh
 ```
 
 開啟：
@@ -153,7 +153,7 @@ Baseline components：
 - Intent schema: `pave_runtime/intent_schema.py`
 - Capability schema: `pave_runtime/capability_schema.py`
 - Control daemon and adapters: `control_daemon/`
-- Runtime launcher: `scripts/run_stage3_demo.sh`
+- Runtime launcher: `scripts/run_openpave.sh`
 - Prompt presets: `prompts/`
 - Scenarios: `scenarios/`
 - Benchmark runner: `scripts/run_benchmark.py`

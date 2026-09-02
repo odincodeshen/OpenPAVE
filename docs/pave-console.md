@@ -88,7 +88,7 @@ TROT_CONFIRMATION_WINDOW_MS=1500
 The recommended path is to use the validated baseline launcher:
 
 ```bash
-OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_openpave.sh
 ```
 
 Then open:

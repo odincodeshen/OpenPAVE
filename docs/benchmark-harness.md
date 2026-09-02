@@ -22,13 +22,13 @@ Start the OpenPAVE runtime first.
 For software-only validation:
 
 ```bash
-OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_openpave.sh
 ```
 
 For physical PuppyPi validation, start the PuppyPi controller and then:
 
 ```bash
-OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_openpave.sh
 ```
 
 ## Run Mock Benchmark

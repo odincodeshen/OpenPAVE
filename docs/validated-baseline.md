@@ -271,13 +271,13 @@ From the repo root:
 cd /path/to/OpenPAVE
 source .venv/bin/activate
 
-./scripts/run_stage3_demo.sh
+./scripts/run_openpave.sh
 ```
 
 To use an explicit software-only profile:
 
 ```bash
-OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_openpave.sh
 ```
 
 The launcher defaults to:
@@ -510,7 +510,7 @@ export INTENT_PATH="$PWD/.openpave/runtime/vla_intent.json"
 export COMMAND_RESULT_PATH="$PWD/.openpave/runtime/vla_command_result.json"
 export ROBOT_STATE_PATH="$PWD/.openpave/runtime/vla_robot_state.json"
 
-OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_openpave.sh
 ```
 
 `configs/puppypi.env` contains the PuppyPi adapter, robot IP address, VLM model/backend, ROS domain, RMW implementation, and ROS CLI Docker image settings. Environment variables exported in the shell can override profile values.
@@ -528,13 +528,13 @@ TROT_CONFIRMATION_WINDOW_MS=1500
 To disable VLM-to-robot forwarding during debugging:
 
 ```bash
-OPENPAVE_CONFIG=configs/puppypi.env INTENT_FORWARDING_ENABLED=0 ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env INTENT_FORWARDING_ENABLED=0 ./scripts/run_openpave.sh
 ```
 
 You can still override a profile value from the shell:
 
 ```bash
-OPENPAVE_CONFIG=configs/puppypi.env ROBOT_IP_ADDRESS=<PUPPYPI_IP> ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env ROBOT_IP_ADDRESS=<PUPPYPI_IP> ./scripts/run_openpave.sh
 ```
 
 ## Open URLs
@@ -688,7 +688,7 @@ The control daemon ignores an intent file that already exists before daemon star
 To intentionally replay an existing intent file during development:
 
 ```bash
-PROCESS_EXISTING_INTENT_ON_START=1 ./scripts/run_stage3_demo.sh
+PROCESS_EXISTING_INTENT_ON_START=1 ./scripts/run_openpave.sh
 ```
 
 If the intent file changes to `TROT` while the UI is running, the likely source is a VLM output being forwarded by `live-vlm-webui`. In that case, check `openpave-ui.log` and the UI prompt/result panel.
@@ -748,7 +748,7 @@ Terminal 1:
 cd /path/to/OpenPAVE
 source .venv/bin/activate
 
-OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_openpave.sh
 ```
 
 Confirm the launcher prints:
@@ -836,7 +836,7 @@ export INTENT_PATH="$PWD/.openpave/runtime/vla_intent.json"
 export COMMAND_RESULT_PATH="$PWD/.openpave/runtime/vla_command_result.json"
 export ROBOT_STATE_PATH="$PWD/.openpave/runtime/vla_robot_state.json"
 
-OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_openpave.sh
 ```
 
 Terminal 2:
@@ -888,7 +888,7 @@ python3 -B -m unittest discover
 3. Mock runtime and benchmark:
 
 ```bash
-OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/mock.env ./scripts/run_openpave.sh
 python3 scripts/run_benchmark.py scenarios/mock-intent-stop-trot.json
 python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl \
   --min-pass-rate 1.0 \
@@ -913,7 +913,7 @@ Run a text-only inference prompt and confirm that the VLM result panel updates.
 5. Physical PuppyPi validation:
 
 ```bash
-OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_openpave.sh
 
 curl -s -X POST http://127.0.0.1:7071/intent \
   -H 'Content-Type: application/json' \
@@ -941,7 +941,7 @@ When `ROBOT_ADAPTER=puppypi`, the launcher sends a final `STOP` intent before st
 Disable this only for debugging:
 
 ```bash
-STOP_ROBOT_ON_EXIT=0 OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+STOP_ROBOT_ON_EXIT=0 OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_openpave.sh
 ```
 
 It does not stop external dependencies such as vLLM or the robot-side ROS 2 controller.
@@ -1005,7 +1005,7 @@ export INTENT_PATH="$PWD/.openpave/runtime/vla_intent.json"
 export COMMAND_RESULT_PATH="$PWD/.openpave/runtime/vla_command_result.json"
 export ROBOT_STATE_PATH="$PWD/.openpave/runtime/vla_robot_state.json"
 
-OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_stage3_demo.sh
+OPENPAVE_CONFIG=configs/puppypi.env ./scripts/run_openpave.sh
 ```
 
 ### Terminal 4: Smoke Test

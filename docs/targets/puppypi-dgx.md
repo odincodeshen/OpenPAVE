@@ -56,7 +56,7 @@ Override values from the shell when your robot IP, Docker image tags, or ROS 2 s
 ```bash
 OPENPAVE_CONFIG=configs/puppypi.env \
 ROBOT_IP_ADDRESS=<PUPPYPI_IP> \
-./scripts/run_stage3_demo.sh
+./scripts/run_openpave.sh
 ```
 
 ## ROS 2 CLI Images
