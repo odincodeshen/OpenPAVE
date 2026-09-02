@@ -6,6 +6,7 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 
 - [OpenPAVE Platform Specification](openpave-platform-spec.md): project specification, goals, four-dimensional model, repository policy, and roadmap.
 - [Validation Matrix](validation-matrix.md): evidence map for validated, experimental, partial, and candidate hardware/workflow combinations.
+- [Seam Validation Runbook](seam-validation-runbook.md): reproduce the real-brain seam matrix (brain × body × transport) with the four-dimension config recipes, `deploy_seam.sh`, and `seam_run.sh`.
 - [Validated Baseline](validated-baseline.md): primary runbook for reproducing OpenPAVE Validated Baseline v1.0.
 - [Demo Integration Levels](demo-integration-levels.md): how Physical AI demos can join OpenPAVE at different depths.
 - [Demo Catalogue](demo-catalog.md): current validated, experimental, and candidate demos.

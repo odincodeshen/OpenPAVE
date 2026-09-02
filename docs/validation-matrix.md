@@ -34,7 +34,8 @@ It should be read as an evidence map, not a marketing compatibility table. A che
 | DGX Spark | PuppyPi | capability actions | raw zenoh seam plugin | Experimental | Level 3 | Real-brain run 2026-09-02: DGX brain drove real PuppyPi, home 516 / trot 1015 / stop 515 ms (`path=bridge`). `pave_runtime/seam.py`, `pave_runtime/seam_backends/zenoh_seam.py`; origin `experiments/neutral-seam/` |
 | DGX Spark | PuppyPi | capability actions | device-connect seam plugin | Experimental | Level 3 | Real-brain run 2026-09-02: DGX brain drove real PuppyPi via cross-host D2D discovery, home 511 / trot 1013 / stop 514 ms (`path=bridge`). `pave_runtime/seam_backends/dc_seam.py`; origin `experiments/device-connect/` |
 | DGX Spark | mock arm | manipulation capability | raw zenoh seam | Experimental | Level 3 | `experiments/capability-mve/`, `ROBOT_ADAPTER=mock_arm` |
-| DGX Spark | USB camera on RPi5 | sensing capability | zenoh control/data plane split | Experimental | Level 2 / Level 3 | `experiments/camera-mve/`, `ROBOT_ADAPTER=camera_usb` |
+| DGX Spark | USB camera on RPi5 | sensing capability (`get_image`) | raw_zenoh / device_connect seam plugin | Experimental | Level 2 / Level 3 | Real-brain run 2026-09-02: DGX brain got `get_image` control-plane metadata (jpeg ~98 KB, 640x480, `/dev/video0`) over BOTH transports. `configs/dgx-camera.env`, `scripts/seam_run.sh`; frame data plane is separate, see `experiments/camera-mve/` |
+| Radxa O6 | USB camera on RPi5 | sensing capability (`get_image`) | raw_zenoh / device_connect seam plugin | Experimental | Level 2 / Level 3 | Real-brain run 2026-09-02: Radxa O6 brain got `get_image` control-plane metadata (jpeg ~99 KB, 640x480) over BOTH transports. `configs/radxa-camera.env`, `scripts/seam_run.sh` |
 | Jetson Thor | robot/sensor endpoints | VLM/VLA workflows | target-dependent | Partial | To be documented | Experimentally validated at different levels; needs baseline-style runbook |
 | Radxa O6 | PuppyPi | capability actions | raw zenoh seam plugin | Experimental | Level 3 | First real-brain validation 2026-09-02: Radxa O6 (Armv9) brain drove real PuppyPi, home 512 / trot 1013 / stop 514 ms (`path=bridge`). `pave_runtime/seam.py`, `pave_runtime/seam_backends/zenoh_seam.py` |
 | Radxa O6 | PuppyPi | capability actions | device-connect seam plugin | Experimental | Level 3 | First real-brain validation 2026-09-02: Radxa O6 brain drove real PuppyPi via cross-host D2D discovery, home 511 / trot 1014 / stop 514 ms (`path=bridge`). `pave_runtime/seam_backends/dc_seam.py` |
@@ -56,6 +57,8 @@ It should be read as an evidence map, not a marketing compatibility table. A che
 
 ## Real-Brain Seam Plugin Validation (2026-09-02)
 
+To reproduce this section end to end, follow `docs/seam-validation-runbook.md` (install deps, deploy with `scripts/deploy_seam.sh`, run with `scripts/seam_run.sh`).
+
 This run promoted the seam from experiment code to a transport plugin (`pave_runtime.seam.create_seam_transport`) and validated it with **real brains driving a real robot**. Two brains (DGX Spark, Radxa O6) each drove the physical PuppyPi over both transports, using the **same** `scripts/seam_cli.py` and the **same** `puppypi_bridge` adapter — only `SEAM_TRANSPORT` (and the brain host) changed. No body or brain code was modified between cells.
 
 Body-side `latency_ms` per cell (`home` / `trot` / `stop`), all `path=bridge`:
@@ -74,6 +77,17 @@ Findings:
 - **Radxa O6 (Armv9) is validated as a real brain** over both transports for the seam control path.
 - **Brain-side deployment is light:** the brain needs only `pave_runtime/` (~9 KB) plus `zenoh` / `device-connect-agent-tools`; `scripts/seam_cli.py` imports the adapter lazily, so the brain does not need `control_daemon`.
 - **Known behavior:** `raw_zenoh` opens a fresh zenoh session per `send`, so discovery can occasionally miss within the settle window (observed once on `stop`); an immediate resend succeeds. A long-lived brain session would remove this.
+
+### Sensing endpoint over the seam (RPi5 USB camera)
+
+The same plugin also carries a **sensing** capability. Using four-dimension recipes (`configs/dgx-camera.env`, `configs/radxa-camera.env`) with the one-command launcher `scripts/seam_run.sh`, both brains drove the RPi5 USB camera (`ROBOT_ADAPTER=camera_usb`) over both transports. `get_image` returned real **control-plane metadata** for a freshly grabbed 640×480 JPEG:
+
+| Brain (real) | `raw_zenoh` | `device_connect` (D2D) |
+| --- | --- | --- |
+| DGX Spark | jpeg 98,223 B | jpeg 97,070 B |
+| Radxa O6 | jpeg 99,935 B | jpeg 98,694 B |
+
+Every cell returned `status=completed` with `{encoding: jpeg, width: 640, height: 480, source: /dev/video0, seq}`. The **frame bytes travel on a separate data plane** (see `experiments/camera-mve/`); the seam plugin and `seam_run.sh` carry only the control plane — the intended control/data-plane split for sensing. This confirms the seam spans **actuator and sensor** body endpoints, across both brains and both transports, driven entirely by config recipes.
 
 ## Matrix Maintenance Rules
 
