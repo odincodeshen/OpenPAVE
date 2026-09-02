@@ -177,6 +177,29 @@ Current status summary:
 - **Partial**: Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but still need baseline-style matrix rows and runbooks.
 - **Candidate**: SO-101 robot arm + camera and Raspberry Pi ROS 2 car/camera.
 
+## Reproduce the Seam Validation
+
+The real-brain seam matrix — a brain node driving a physical body over the seam plugin, across both
+transports — is reproducible from four-dimension config recipes plus two scripts. Full guide:
+[Seam Validation Runbook](docs/seam-validation-runbook.md).
+
+```bash
+# 1. Install the seam dependencies into each host's venv (pinned versions)
+<venv>/bin/pip install -r requirements-seam.txt          # brain + body
+<venv>/bin/pip install -r requirements-seam-camera.txt   # camera sensor body only
+
+# 2. Deploy the seam bundle to a brain (ships pave_runtime + seam_cli + seam_run + configs)
+scripts/deploy_seam.sh odin@192.168.0.24 '$HOME/openpave-seam' '$HOME/.venv-zenoh/bin/python'
+
+# 3. Bring up the body, then drive it from the brain — same launcher, any recipe
+scripts/seam_run.sh configs/dgx-puppypi.env body             # on the body (PuppyPi)
+scripts/seam_run.sh configs/dgx-puppypi.env brain send home  # on the brain (DGX)
+```
+
+A recipe (`configs/<brain>-<body>.env`) pins the four dimensions; swapping the transport is a
+one-line change to `SEAM_TRANSPORT` (`raw_zenoh` | `device_connect`). Recipes available today:
+`dgx-puppypi`, `radxa-puppypi` (actuator), `dgx-camera`, `radxa-camera` (sensor).
+
 ## Benchmarking
 
 Start the runtime, then run:

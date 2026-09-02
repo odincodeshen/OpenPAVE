@@ -1,0 +1,10 @@
+# Extra dependency for a USB-camera *sensor* body (ROBOT_ADAPTER=camera_usb). Validated 2026-09-02
+# on the RPi5. Install alongside requirements-seam.txt on the camera host:
+#
+#   <venv>/bin/pip install -r requirements-seam.txt -r requirements-seam-camera.txt
+#
+# The headless build carries no GUI/X11 libraries, which is what a headless RPi5 wants. cv2 is
+# imported lazily by control_daemon/camera_adapter.py only when a frame is actually grabbed, so it
+# is not needed on brains or on non-camera bodies.
+
+opencv-python-headless==5.0.0.93

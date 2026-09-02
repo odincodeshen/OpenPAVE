@@ -177,6 +177,28 @@ OpenPAVE 用 validation matrix 追蹤支援狀態，而不是直接宣稱所有�
 - **Partial**: Jetson Thor、Radxa O6 與其他 Arm-based edge nodes 已完成不同程度驗證，但仍需要 baseline-style matrix rows 和 runbooks。
 - **Candidate**: SO-101 robot arm + camera、Raspberry Pi ROS 2 car/camera。
 
+## 重現 Seam 驗證
+
+real-brain seam matrix（brain 節點透過 seam plugin 驅動實體 body、涵蓋兩種 transport）可從四維
+config recipe 加兩支腳本完整重現。完整指南：[Seam Validation Runbook](docs/seam-validation-runbook.md)。
+
+```bash
+# 1. 把 seam 依賴裝進每台 host 的 venv（版本已 pin）
+<venv>/bin/pip install -r requirements-seam.txt          # brain + body
+<venv>/bin/pip install -r requirements-seam-camera.txt   # 只有 camera sensor body 需要
+
+# 2. 把 seam bundle 部署到 brain（含 pave_runtime + seam_cli + seam_run + configs）
+scripts/deploy_seam.sh odin@192.168.0.24 '$HOME/openpave-seam' '$HOME/.venv-zenoh/bin/python'
+
+# 3. 先起 body，再從 brain 送指令 — 同一支 launcher、任一 recipe
+scripts/seam_run.sh configs/dgx-puppypi.env body             # 在 body（PuppyPi）
+scripts/seam_run.sh configs/dgx-puppypi.env brain send home  # 在 brain（DGX）
+```
+
+一個 recipe（`configs/<brain>-<body>.env`）綁定四個維度；換 transport 只需改 `SEAM_TRANSPORT` 一行
+（`raw_zenoh` | `device_connect`）。目前可用的 recipe：`dgx-puppypi`、`radxa-puppypi`（actuator）、
+`dgx-camera`、`radxa-camera`（sensor）。
+
 ## Benchmarking
 
 先啟動 runtime，再執行：
