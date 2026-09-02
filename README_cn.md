@@ -1,115 +1,114 @@
 # OpenPAVE: Open Physical AI Validation and Experimentation
 
-## 面向 Arm-based edge platforms 的 Physical AI demo 開放驗證與實驗 workflow
+## 面向 Arm-based edge platforms 的 Physical AI demo 開放參考驗證 workflow
 
-OpenPAVE 將原本常常分散評估的元件，接成一條可以驗證的 Physical AI workflow：
+OpenPAVE 幫助開發者在本地端組裝、執行、觀察與比較 Physical AI demos。
+
+它把原本常常分開評估的元件，接成一條可以驗證的 workflow：
 
 - local VLM/VLA inference
 - robot 或 sensor endpoints
 - robot middleware
-- normalized intent 與 control contracts
+- brain-body transport
+- normalized intent 與 capability contracts
 - command and state feedback
 - observability UI
 - demo runbooks
 - benchmark and validation paths
 
-這個專案不是像 vLLM 或 Ollama 這類 LLM serving framework。OpenPAVE 是早期 reference validation and experimentation workflow，目標是幫助開發者 catalogue、run、observe、compare，並依照不同深度選擇性整合 Physical AI demos。
+OpenPAVE 不是像 vLLM 或 Ollama 這類 LLM serving framework，也不是完整商用 robotics stack。它是一個 fork-friendly reference base，用來驗證 Arm-based edge platforms 上的 Physical AI workflow。
+
+## Demo References
+
+以下早期 demo 展示了 OpenPAVE 延伸出來的原始方向，可作為參考：
+
+- [Physical AI edge VLA demo short](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
+- [Physical AI robot workflow demo](https://youtu.be/kRiXri0te0g?si=ijmNqtQX8cuCoHHs)
 
 ## OpenPAVE 提供什麼
 
-OpenPAVE 支援不同深度的 demo integration：
+OpenPAVE 提供三個實用 building blocks：
+
+1. **本地 Arm edge Physical AI testbed**
+   - 從已驗證的 PuppyPi + DGX baseline 開始。
+   - 後續可以替換 robot/sensor endpoints、edge nodes、transports 或 inference backends。
+
+2. **可重複的 validation workflow**
+   - 用 integration levels、scenarios、configs 和 runbooks 描述 demo。
+   - 透過 `/pave` console 觀察 runtime state。
+   - 記錄 command results、robot state 和 benchmark outputs。
+
+3. **plugin-oriented extension model**
+   - 新增 robot/sensor adapter。
+   - 新增 seam transport。
+   - 新增 validated hardware combination 的 config recipe。
+   - 新增 demo scenarios 和 benchmark paths。
+
+## 架構：Brain、Body、Seam
+
+OpenPAVE 將一個 Physical AI demo 建模成兩層，並由一條主要 seam 連接：
+
+```text
+Brain side: local inference / control / observability node
+    |
+    | seam: brain-body communication boundary
+    |
+Body side: robot or sensor endpoint
+    |-- local controller, adapter, policy, or middleware
+    |-- motors, servos, cameras, IMU, and sensors
+```
+
+OpenPAVE 聚焦在 brain-body seam、跨 seam 傳遞的 control contract，以及 body side 回傳的 observable state。它不試圖定義 body controller 和每個 motor / sensor 之間的內部連線。
+
+目前 validated baseline：
+
+```text
+PuppyPi + DGX Spark
+```
+
+這是第一個 validated deep-integration target，不是專案邊界。
+
+## 四維模型
+
+一組完整的 OpenPAVE validation configuration 由四個維度組成：
+
+| Dimension | Role | Current state |
+| --- | --- | --- |
+| Brain-side edge node | Local inference、orchestration、UI、benchmark runner | DGX Spark baseline；Jetson Thor、Radxa O6 與其他 Arm-based edge nodes 已完成不同程度驗證 |
+| Body-side robot/sensor endpoint | Robot、arm、camera、sensor endpoint 或 future body-side policy unit | PuppyPi baseline；已有 mock、mock arm、camera adapters |
+| Seam transport | Brain-body communication boundary | baseline adapter path；raw zenoh 與 device-connect 屬 experimental |
+| Inference / upper-layer application | VLM/VLA backend、planner 或 policy layer | 目前是 vLLM/OpenAI-compatible API；pluginization 是 roadmap |
+
+Configs 會把這些維度綁成可重複執行的 recipes。例如：
+
+```text
+configs/mock.env
+configs/puppypi.env
+```
+
+## Demo Integration Levels
+
+不是每個 demo 都需要採用完整 OpenPAVE runtime。Demo 可以用不同深度加入：
 
 ```text
 Level 0: Catalogue only
 Level 1: Launch / status / result wrapper
 Level 2: State or result bridge
-Level 3: Normalized intent / control contract
+Level 3: Normalized intent / capability control contract
 Level 4: Benchmark integration
 ```
 
-Demo 可以維持獨立執行，同時透過 OpenPAVE 提供共同描述、validation notes、launch/status hooks、high-level results，或進一步接上 runtime 與 benchmark contracts。
-
-## Demo
-
-依照專案版本整理的 OpenPAVE brain-body workflow 錄影：
-
-- **v0.9 — Real-time VLA on DGX Spark: RPi quadruped with LLaVA-7B** — [watch](https://youtu.be/kRiXri0te0g?si=iOhW0d2SSSP6zT4V)
-  早期 end-to-end proof of concept：在 DGX Spark 上執行 LLaVA-7B vision-language model，即時驅動 RPi-based quadruped（PuppyPi）。這條 brain-side inference 到 body-side motion loop，後續成為 OpenPAVE 第一個 deep-integration reference path。
-
-- **v1.3 — Stage 3 runtime** — [watch](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
-  v1.3 iteration 的短片。這個 runtime 後續硬化成 Validated Baseline v1.0：intent ingress、control daemon、PuppyPi adapter、`/pave` console 與 command/state feedback。
-
-## Validated Baseline v1.0
-
-第一個 validated target 是：
-
-```text
-PuppyPi + DGX
-```
-
-PuppyPi + DGX 是第一個 validated deep-integration example，不是專案邊界。它展示完整 brain/control reference path：
-
-```text
-local VLM/VLA inference
--> normalized intent
--> Control Daemon
--> Robot Adapter
--> ROS 2 execution
--> command/state feedback
--> benchmark validation
-```
-
-其他 demo 不需要採用這條完整路徑。它們可以用較輕量的 integration level 加入，例如 catalogue-only、launch/status wrappers，或 result summaries。
-
-未來規劃 targets 包含 SO-101 robot arm + camera、Raspberry Pi ROS 2 car/camera，以及使用不同 middleware 與 communication pattern 的其他 robot/sensor endpoints。
-
-OpenPAVE 的 brain-side platform 目標是 Armv9 平台家族（目前是 DGX；未來規劃 Thor 與其他 Armv9 edge nodes），而不是單一 vendor 或 SKU。
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph Body["Body Side: Robot / Sensor Endpoint"]
-        Sensors["Sensors\ncamera, raw USB, ROS 2 image, future lidar/audio"]
-        RobotCtl["Robot-side control\nROS 2 services/topics; persistent bridge (experimental)"]
-    end
-
-    subgraph Brain["Brain Side: Local Inference / Control Node"]
-        Stream["Stream / sensor ingest"]
-        VLM["OpenAI-compatible VLM/VLA backend\nvLLM today"]
-        UI["OpenPAVE /pave console\nprompt, result, runtime feedback"]
-        Ingress["Intent Ingress\nHTTP /intent"]
-        Daemon["Control Daemon\nschema validation + lifecycle"]
-        Adapter["Robot Adapter\nmock, PuppyPi, future targets"]
-        Bench["Benchmark Harness\nscenario + result JSONL"]
-    end
-
-    Sensors --> Stream --> UI
-    UI --> VLM --> UI
-    UI --> Ingress
-    Ingress --> Daemon --> Adapter --> RobotCtl
-    Daemon --> Result["command result + robot state"]
-    Result --> UI
-    Bench --> Ingress
-    Result --> Bench
-```
-
-目前 validated implementation：
-
-- Brain side：DGX（Armv9 Grace CPU + Nvidia GPU）執行 vLLM、OpenPAVE runtime services 與 `/pave` console。
-- Body side：PuppyPi 執行 ROS 2 `puppy_control`。
-- Control path：Intent Ingress -> Control Daemon -> Robot Adapter -> Dockerized ROS 2 CLI。
-- Feedback path：command result 與 robot state JSON files，供 UI 與 benchmark harness 使用。
+這讓 demo 可以維持獨立執行，同時透過 OpenPAVE 取得共用 documentation、observability、control contracts 或 benchmark tooling。
 
 ## Quick Start
 
-主要操作 runbook 請使用 validated baseline guide：
+主要 runbook 請使用 validated baseline guide：
 
 ```text
 docs/validated-baseline.md
 ```
 
-最小 software-only 驗證：
+最小 software-only validation：
 
 ```bash
 cd /path/to/OpenPAVE
@@ -132,49 +131,80 @@ OPENPAVE_CONFIG=configs/mock.env ./scripts/run_stage3_demo.sh
 http://127.0.0.1:8090/pave
 ```
 
-## Demo Integration
+`mock` profile 可以在沒有 robot hardware 的情況下驗證 runtime path。
+
+## Validated Baseline
+
+目前 baseline 展示：
+
+```text
+local VLM/VLA inference
+-> normalized intent
+-> Control Daemon
+-> Robot Adapter
+-> ROS 2 execution
+-> command/state feedback
+-> benchmark validation
+```
+
+Baseline components：
+
+- Intent Ingress: `intent_ingress/server.py`
+- Intent schema: `pave_runtime/intent_schema.py`
+- Capability schema: `pave_runtime/capability_schema.py`
+- Control daemon and adapters: `control_daemon/`
+- Runtime launcher: `scripts/run_stage3_demo.sh`
+- Prompt presets: `prompts/`
+- Scenarios: `scenarios/`
+- Benchmark runner: `scripts/run_benchmark.py`
+- Benchmark summarizer: `scripts/summarize_benchmarks.py`
+- OpenPAVE console: `ui/` submodule，目前基於 OpenPAVE-maintained `live-vlm-webui` fork
+
+## Validation Matrix
+
+OpenPAVE 用 validation matrix 追蹤支援狀態，而不是直接宣稱所有組合都完整相容。
 
 建議從這裡開始：
 
-- [Demo Integration Levels](docs/demo-integration-levels.md)
-- [Demo Catalogue](docs/demo-catalog.md)
-- [Contributing Demos](docs/contributing-demos.md)
+- [Validation Matrix](docs/validation-matrix.md)
+- [Validated Baseline](docs/validated-baseline.md)
+- [PuppyPi + DGX Target](docs/targets/puppypi-dgx.md)
 
-這些文件說明 Physical AI demos 如何用不同深度加入 OpenPAVE，從 catalogue entry 到 launch/status hooks、state/result bridges、normalized intent control，或 benchmark integration。
+目前狀態摘要：
+
+- **Baseline**: DGX Spark + PuppyPi，透過 validated runtime path。
+- **Experimental**: persistent PuppyPi bridge、raw zenoh neutral seam、device-connect seam、capability 與 camera MVEs。
+- **Partial**: Jetson Thor、Radxa O6 與其他 Arm-based edge nodes 已完成不同程度驗證，但仍需要 baseline-style matrix rows 和 runbooks。
+- **Candidate**: SO-101 robot arm + camera、Raspberry Pi ROS 2 car/camera。
 
 ## Benchmarking
 
-先啟動 runtime，然後執行：
+先啟動 runtime，再執行：
 
 ```bash
 python3 scripts/run_benchmark.py scenarios/mock-intent-stop-trot.json
 python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 ```
 
-目前 benchmark harness 驗證的是 control path。未來工作會加入 sensor replay、VLM/VLA output quality checks、transport latency 與 multi-target comparison。
-
-## Current Limitations
-
-- 目前 **default** 的 PuppyPi command path 使用 Dockerized one-shot ROS 2 CLI calls，簡單且可重現。現在已有一條 experimental 的 low-latency control plane（`ROBOT_ADAPTER=puppypi_bridge`，常駐 body-side bridge，並自動 fallback 回 CLI path；真機 PuppyPi STOP p95 −89%），但尚未成為 default。見 `experiments/persistent-bridge/`。
-- 目前 **default** 的 brain↔body seam 是 ROS-native（`rmw_zenoh`）。現在已有一條 experimental 的**中性、非 ROS seam**（raw zenoh + capability JSON）：一個完全不含 ROS 的純 Python body 也能成為一等公民。已在**單機**、**跨主機**（兩台機器、兩個 Python 版本）、以及**端到端打通真機 controller** 三個層級驗證。屬 experimental，尚未成為 default。見 `experiments/neutral-seam/`。
-- ROS 2 over Wi-Fi 與 DDS/RMW 行為可能因 machine、network、container image 與 firewall settings 而不同。目前 validated default path 是 `rmw_fastrtps_cpp`；`rmw_cyclonedds_cpp` 已記錄為 environment-specific workaround。
-- `/pave` console 目前仍位於 OpenPAVE-maintained `live-vlm-webui` fork。未來規劃 OpenPAVE-native console。
-- Camera/sensor replay 與完整 end-to-end VLM/VLA quality benchmarking 是 future work。
+目前 benchmark harness 驗證的是 control path，並可根據 scenario metadata 彙整結果。未來工作會加入 sensor replay、VLM/VLA output quality checks、transport latency breakdown 和 multi-target comparison。
 
 ## Documentation
 
 建議從這裡開始：
 
 - [Documentation Index](docs/index.md)
+- [OpenPAVE Platform Specification](docs/openpave-platform-spec.md)
+- [Validation Matrix](docs/validation-matrix.md)
 - [Validated Baseline Guide](docs/validated-baseline.md)
-- [Demo Integration Levels](docs/demo-integration-levels.md)
-- [Demo Catalogue](docs/demo-catalog.md)
 - [Further Work](docs/further-work.md)
 
-核心規格：
+核心參考：
 
 - [Architecture](docs/architecture.md)
 - [Brain-Body Architecture](docs/architecture-brain-body.md)
+- [Demo Integration Levels](docs/demo-integration-levels.md)
+- [Demo Catalogue](docs/demo-catalog.md)
+- [Contributing Demos](docs/contributing-demos.md)
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
@@ -187,6 +217,14 @@ python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 ```text
 docs/archive/
 ```
+
+## Current Limitations
+
+- Default PuppyPi command path 使用 Dockerized one-shot ROS 2 CLI calls。Experimental persistent bridge 已存在，但尚未成為 default。
+- Default brain-body path 仍是 validated baseline adapter path。Raw zenoh 和 device-connect seam transports 屬 experimental。
+- `/pave` 目前仍位於 OpenPAVE-maintained `live-vlm-webui` fork。未來規劃 OpenPAVE native console。
+- 目前 benchmark coverage 聚焦 control-path validation。完整 sensor replay 和 VLM/VLA quality benchmark 是 future work。
+- 其他 Arm-based edge nodes 已完成不同程度驗證，但大多仍需要 baseline-quality runbooks 和 matrix entries。
 
 ## Third-Party Notice
 

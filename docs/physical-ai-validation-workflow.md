@@ -28,7 +28,7 @@ The current validated deep-integration target is PuppyPi + DGX. That target prov
 
 Arm-based Linux systems are widely used as robot endpoints, embedded controllers, edge gateways, and developer-accessible robotics platforms.
 
-DGX (Armv9 Grace CPU + Nvidia GPU) and Thor are both Armv9 platforms. OpenPAVE validates the feasibility of the Armv9 brain-side platform family, not a single piece of hardware: DGX is the first validated representative, and Thor and other Armv9 edge nodes are follow-on targets in the same family.
+DGX Spark is the primary validated baseline for the brain-side node. Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but still need baseline-quality runbooks and matrix entries before they should be presented as equivalent baseline targets.
 
 OpenPAVE aims to show how these systems can participate in local Physical AI workflows using open-source software and local inference infrastructure.
 
@@ -63,16 +63,17 @@ Planned targets:
 
 The brain-side node runs local VLM/VLA inference, runtime services, UI, and benchmark tooling.
 
-Brain-side hardware is not limited to DGX. DGX, Thor, and future targets share the Armv9 architecture family.
+Brain-side hardware is not limited to DGX. OpenPAVE is intended to track multiple Arm-based edge nodes by validation level rather than by a single vendor or SKU.
 
-Current validated target:
+Current baseline target:
 
 - DGX (Armv9 Grace CPU + Nvidia GPU) running vLLM and OpenPAVE runtime services
 
-Planned targets (Armv9 family):
+Experimentally or partially validated targets:
 
-- Thor
-- additional Armv9-based edge inference/control nodes
+- Jetson Thor
+- Radxa O6
+- additional Arm-based edge inference/control nodes
 - other OpenAI-compatible local VLM serving stacks
 
 ### 3. Intent Contract Layer

@@ -2,107 +2,103 @@
 
 ## An open reference workflow for Physical AI demos on Arm-based edge platforms
 
-OpenPAVE connects pieces that are often evaluated separately into one verifiable Physical AI workflow:
+OpenPAVE helps developers assemble, run, observe, and compare local Physical AI demos.
+
+It connects pieces that are often evaluated separately:
 
 - local VLM/VLA inference
 - robot or sensor endpoints
 - robot middleware
-- normalized intent and control contracts
+- brain-body transport
+- normalized intent and capability contracts
 - command and state feedback
 - observability UI
 - demo runbooks
 - benchmark and validation paths
 
-The project is not an LLM serving framework like vLLM or Ollama. OpenPAVE is an early reference validation and experimentation workflow that helps developers catalogue, run, observe, compare, and optionally integrate Physical AI demos at different depths.
+OpenPAVE is not an LLM serving framework like vLLM or Ollama, and it is not a full commercial robotics stack. It is a fork-friendly reference base for validating Physical AI workflows on Arm-based edge platforms.
+
+## Demo References
+
+These early demos show the original direction that OpenPAVE builds on:
+
+- [Physical AI edge VLA demo short](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
+- [Physical AI robot workflow demo](https://youtu.be/kRiXri0te0g?si=ijmNqtQX8cuCoHHs)
 
 ## What OpenPAVE Provides
 
-OpenPAVE supports several levels of demo integration:
+OpenPAVE gives developers three practical building blocks:
+
+1. **A local Arm edge Physical AI testbed**
+   - Start from a validated PuppyPi + DGX baseline.
+   - Swap in new robot/sensor endpoints, edge nodes, transports, or inference backends over time.
+
+2. **A repeatable validation workflow**
+   - Describe demos with integration levels, scenarios, configs, and runbooks.
+   - Observe runtime state through the `/pave` console.
+   - Record command results, robot state, and benchmark outputs.
+
+3. **A plugin-oriented extension model**
+   - Add a robot/sensor adapter.
+   - Add a seam transport.
+   - Add a config recipe for a validated hardware combination.
+   - Add demo scenarios and benchmark paths.
+
+## Architecture: Brain, Body, Seam
+
+OpenPAVE models a Physical AI demo as two layers connected by one primary seam:
+
+```text
+Brain side: local inference / control / observability node
+    |
+    | seam: brain-body communication boundary
+    |
+Body side: robot or sensor endpoint
+    |-- local controller, adapter, policy, or middleware
+    |-- motors, servos, cameras, IMU, and sensors
+```
+
+OpenPAVE focuses on the brain-body seam, the control contract sent across it, and the observable state that comes back. It does not try to define every internal connection between a body controller and the physical motors or sensors.
+
+Current validated baseline:
+
+```text
+PuppyPi + DGX Spark
+```
+
+This is the first validated deep-integration target, not the project boundary.
+
+## Four-Dimensional Model
+
+A complete OpenPAVE validation configuration combines four dimensions:
+
+| Dimension | Role | Current state |
+| --- | --- | --- |
+| Brain-side edge node | Local inference, orchestration, UI, benchmark runner | DGX Spark baseline; Jetson Thor, Radxa O6, and other Arm-based edge nodes validated at different levels |
+| Body-side robot/sensor endpoint | Robot, arm, camera, sensor endpoint, or future body-side policy unit | PuppyPi baseline; mock, mock arm, and camera adapters exist |
+| Seam transport | Brain-body communication boundary | baseline adapter path; raw zenoh and device-connect are experimental |
+| Inference / upper-layer application | VLM/VLA backend, planner, or policy layer | vLLM/OpenAI-compatible API today; pluginization is roadmap |
+
+Configs bind these dimensions into reproducible recipes. For example:
+
+```text
+configs/mock.env
+configs/puppypi.env
+```
+
+## Demo Integration Levels
+
+Not every demo needs to use the full OpenPAVE runtime. A demo can join at different depths:
 
 ```text
 Level 0: Catalogue only
 Level 1: Launch / status / result wrapper
 Level 2: State or result bridge
-Level 3: Normalized intent / control contract
+Level 3: Normalized intent / capability control contract
 Level 4: Benchmark integration
 ```
 
-A demo can remain independently runnable while OpenPAVE provides a common place to describe it, link validation notes, launch or observe it, collect high-level results, or connect it through deeper runtime and benchmark contracts.
-
-## Demo
-
-Recorded runs of the OpenPAVE brain-body workflow, by project version:
-
-- **v0.9 — Real-time VLA on DGX Spark: RPi quadruped with LLaVA-7B** — [watch](https://youtu.be/kRiXri0te0g?si=iOhW0d2SSSP6zT4V)
-  Early end-to-end proof of concept: an LLaVA-7B vision-language model on a DGX Spark drives
-  an RPi-based quadruped (PuppyPi) in real time. This brain-side inference to body-side motion
-  loop later became the first OpenPAVE deep-integration reference path.
-
-- **v1.3 — Stage 3 runtime** — [watch](https://youtube.com/shorts/QwUnFLIUNe4?si=P6FuZvVzHTzYnd57)
-  A short from the v1.3 iteration that hardened into Validated Baseline v1.0: intent ingress,
-  control daemon, PuppyPi adapter, `/pave` console, and command/state feedback.
-
-## Validated Baseline v1.0
-
-The first validated target is:
-
-```text
-PuppyPi + DGX
-```
-
-PuppyPi + DGX is the first validated deep-integration example, not the project boundary. It demonstrates the full brain/control reference path:
-
-```text
-local VLM/VLA inference
--> normalized intent
--> Control Daemon
--> Robot Adapter
--> ROS 2 execution
--> command/state feedback
--> benchmark validation
-```
-
-Other demos do not need to adopt this full path. They can join OpenPAVE at lighter integration levels, such as catalogue-only entries, launch/status wrappers, or result summaries.
-
-Planned future targets include SO-101 robot arm + camera, Raspberry Pi ROS 2 car/camera, and additional robot/sensor endpoints with different middleware and communication patterns.
-
-OpenPAVE targets the Armv9 brain-side platform family (DGX today; Thor and other Armv9 edge nodes planned), not a single vendor or SKU.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph Body["Body Side: Robot / Sensor Endpoint"]
-        Sensors["Sensors\ncamera, raw USB, ROS 2 image, future lidar/audio"]
-        RobotCtl["Robot-side control\nROS 2 services/topics; persistent bridge (experimental)"]
-    end
-
-    subgraph Brain["Brain Side: Local Inference / Control Node"]
-        Stream["Stream / sensor ingest"]
-        VLM["OpenAI-compatible VLM/VLA backend\nvLLM today"]
-        UI["OpenPAVE /pave console\nprompt, result, runtime feedback"]
-        Ingress["Intent Ingress\nHTTP /intent"]
-        Daemon["Control Daemon\nschema validation + lifecycle"]
-        Adapter["Robot Adapter\nmock, PuppyPi, future targets"]
-        Bench["Benchmark Harness\nscenario + result JSONL"]
-    end
-
-    Sensors --> Stream --> UI
-    UI --> VLM --> UI
-    UI --> Ingress
-    Ingress --> Daemon --> Adapter --> RobotCtl
-    Daemon --> Result["command result + robot state"]
-    Result --> UI
-    Bench --> Ingress
-    Result --> Bench
-```
-
-Current validated implementation:
-
-- Brain side: DGX (Armv9 Grace CPU + Nvidia GPU) running vLLM, OpenPAVE runtime services, and the `/pave` console.
-- Body side: PuppyPi running ROS 2 `puppy_control`.
-- Control path: Intent Ingress -> Control Daemon -> Robot Adapter -> Dockerized ROS 2 CLI.
-- Feedback path: command result and robot state JSON files consumed by the UI and benchmark harness.
+This lets a demo remain independently runnable while OpenPAVE provides shared documentation, observability, control contracts, or benchmark tooling where useful.
 
 ## Quick Start
 
@@ -135,15 +131,51 @@ Open:
 http://127.0.0.1:8090/pave
 ```
 
-## Demo Integration
+The mock profile validates the runtime path without robot hardware.
 
-Start with:
+## Validated Baseline
 
-- [Demo Integration Levels](docs/demo-integration-levels.md)
-- [Demo Catalogue](docs/demo-catalog.md)
-- [Contributing Demos](docs/contributing-demos.md)
+The current baseline demonstrates:
 
-These documents describe how Physical AI demos can join OpenPAVE at different levels, from a catalogue entry to launch/status hooks, state/result bridges, normalized intent control, or benchmark integration.
+```text
+local VLM/VLA inference
+-> normalized intent
+-> Control Daemon
+-> Robot Adapter
+-> ROS 2 execution
+-> command/state feedback
+-> benchmark validation
+```
+
+Baseline components:
+
+- Intent Ingress: `intent_ingress/server.py`
+- Intent schema: `pave_runtime/intent_schema.py`
+- Capability schema: `pave_runtime/capability_schema.py`
+- Control daemon and adapters: `control_daemon/`
+- Runtime launcher: `scripts/run_stage3_demo.sh`
+- Prompt presets: `prompts/`
+- Scenarios: `scenarios/`
+- Benchmark runner: `scripts/run_benchmark.py`
+- Benchmark summarizer: `scripts/summarize_benchmarks.py`
+- OpenPAVE console: `ui/` submodule, currently based on an OpenPAVE-maintained `live-vlm-webui` fork
+
+## Validation Matrix
+
+OpenPAVE tracks support as a validation matrix, not as a blanket compatibility claim.
+
+Start here:
+
+- [Validation Matrix](docs/validation-matrix.md)
+- [Validated Baseline](docs/validated-baseline.md)
+- [PuppyPi + DGX Target](docs/targets/puppypi-dgx.md)
+
+Current status summary:
+
+- **Baseline**: DGX Spark + PuppyPi through the validated runtime path.
+- **Experimental**: persistent PuppyPi bridge, raw zenoh neutral seam, device-connect seam, capability and camera MVEs.
+- **Partial**: Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but still need baseline-style matrix rows and runbooks.
+- **Candidate**: SO-101 robot arm + camera and Raspberry Pi ROS 2 car/camera.
 
 ## Benchmarking
 
@@ -154,30 +186,25 @@ python3 scripts/run_benchmark.py scenarios/mock-intent-stop-trot.json
 python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 ```
 
-The current benchmark harness validates the control path. Future work will add sensor replay, VLM/VLA output quality checks, transport latency, and multi-target comparison.
-
-## Current Limitations
-
-- The **default** PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls — simple and reproducible. An experimental low-latency control plane now exists (`ROBOT_ADAPTER=puppypi_bridge`, a persistent body-side bridge with automatic fallback to the CLI path; real PuppyPi STOP p95 −89%), but it is not yet the default. See `experiments/persistent-bridge/`.
-- The **default** brain↔body seam is ROS-native (`rmw_zenoh`). An experimental **neutral, non-ROS seam** now exists (raw zenoh + capability JSON): a pure-Python body with no ROS joins as a first-class body. Validated single-host, cross-host (two machines, two Python versions), and end-to-end into a real robot's controller. It is experimental, not the default. See `experiments/neutral-seam/`.
-- ROS 2 over Wi-Fi and DDS/RMW behavior can vary by machine, network, container image, and firewall settings. The validated default path is `rmw_fastrtps_cpp`; `rmw_cyclonedds_cpp` is documented as an environment-specific workaround.
-- The `/pave` console currently lives in the OpenPAVE-maintained `live-vlm-webui` fork. A native OpenPAVE console is planned.
-- Camera/sensor replay and full end-to-end VLM/VLA quality benchmarking are future work.
+The current benchmark harness validates the control path and can summarize results by scenario metadata. Future work will add sensor replay, VLM/VLA output quality checks, transport latency breakdown, and multi-target comparison.
 
 ## Documentation
 
 Start here:
 
 - [Documentation Index](docs/index.md)
+- [OpenPAVE Platform Specification](docs/openpave-platform-spec.md)
+- [Validation Matrix](docs/validation-matrix.md)
 - [Validated Baseline Guide](docs/validated-baseline.md)
-- [Demo Integration Levels](docs/demo-integration-levels.md)
-- [Demo Catalogue](docs/demo-catalog.md)
 - [Further Work](docs/further-work.md)
 
-Core specs:
+Core references:
 
 - [Architecture](docs/architecture.md)
 - [Brain-Body Architecture](docs/architecture-brain-body.md)
+- [Demo Integration Levels](docs/demo-integration-levels.md)
+- [Demo Catalogue](docs/demo-catalog.md)
+- [Contributing Demos](docs/contributing-demos.md)
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
@@ -190,6 +217,14 @@ Historical material is kept under:
 ```text
 docs/archive/
 ```
+
+## Current Limitations
+
+- The default PuppyPi command path uses Dockerized one-shot ROS 2 CLI calls. An experimental persistent bridge exists, but it is not yet the default.
+- The default brain-body path remains the validated baseline adapter path. Raw zenoh and device-connect seam transports are experimental.
+- `/pave` currently lives in an OpenPAVE-maintained `live-vlm-webui` fork. A native OpenPAVE console is planned.
+- Current benchmark coverage focuses on control-path validation. Full sensor replay and VLM/VLA quality benchmarks are future work.
+- Additional Arm-based edge nodes have been validated at different levels, but most still need baseline-quality runbooks and matrix entries.
 
 ## Third-Party Notice
 

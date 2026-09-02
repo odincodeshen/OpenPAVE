@@ -4,6 +4,16 @@ OpenPAVE is an early open reference workflow for Physical AI validation and expe
 
 This document tracks validated work, experimental work, and planned feature work. It avoids the historical stage narrative except where those stages are useful context for the current baseline.
 
+## Current Direction
+
+OpenPAVE is moving from a single validated PuppyPi + DGX demo into a four-dimensional Physical AI validation base:
+
+```text
+brain-side edge node x body endpoint x inference/application layer x seam transport
+```
+
+The current implementation should stay easy to reproduce while the project adds clearer plugin boundaries, validation-matrix evidence, and basic performance breakdowns. DGX Spark remains the primary baseline. Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but still need baseline-style documentation before they should be presented as equal baseline targets.
+
 ## Validated Today
 
 ### Validated Baseline v1.0
@@ -80,6 +90,16 @@ This document tracks validated work, experimental work, and planned feature work
 - [ ] Demo metadata is currently documented as text; a machine-readable demo manifest is future work.
 
 ## Planned Feature Work
+
+### Immediate Implementation Priorities
+
+- [ ] Keep `docs/openpave-platform-spec.md` as the project-level source for goals, architecture, extension model, and roadmap.
+- [ ] Maintain `docs/validation-matrix.md` as the evidence map for validated, experimental, partial, and candidate combinations.
+- [ ] Convert existing validated and experimental work into matrix rows with explicit status, integration level, config/runbook, and known limitations.
+- [ ] Formalize four-dimensional config naming and metadata: brain-side node, body endpoint/adapter, seam transport, and inference/application runtime.
+- [ ] Graduate seam transport plugin documentation around `create_seam_transport`, `SEAM_TRANSPORT`, `raw_zenoh`, and `device_connect`.
+- [ ] Add basic three-segment performance reporting: brain inference latency, seam transport latency, and body execution latency.
+- [ ] Keep `README.md` focused as the developer entry point and move detailed historical or experimental notes into dedicated docs.
 
 ### Demo Catalogue and Integration
 

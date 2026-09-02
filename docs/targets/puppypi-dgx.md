@@ -13,7 +13,7 @@ PuppyPi ROS 2 endpoint
 
 This target validates the OpenPAVE workflow. It is not the project boundary.
 
-The brain side here is DGX, the first validated representative of the Armv9 brain-side platform family. Target documents for other Armv9 brain-side platforms (such as Thor) will reuse this same template.
+The brain side here is DGX Spark, the primary validated baseline representative of the Arm-based brain-side platform family. Target documents for Jetson Thor, Radxa O6, and other Arm-based edge nodes should reuse this template once their validation evidence is organized into baseline-style runbooks.
 
 ## Target Roles
 

@@ -4,6 +4,8 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 
 ## Start Here
 
+- [OpenPAVE Platform Specification](openpave-platform-spec.md): project specification, goals, four-dimensional model, repository policy, and roadmap.
+- [Validation Matrix](validation-matrix.md): evidence map for validated, experimental, partial, and candidate hardware/workflow combinations.
 - [Validated Baseline](validated-baseline.md): primary runbook for reproducing OpenPAVE Validated Baseline v1.0.
 - [Demo Integration Levels](demo-integration-levels.md): how Physical AI demos can join OpenPAVE at different depths.
 - [Demo Catalogue](demo-catalog.md): current validated, experimental, and candidate demos.
@@ -18,8 +20,10 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 
 ## Architecture and Positioning
 
+- [OpenPAVE Platform Specification](openpave-platform-spec.md): two-layer brain/body architecture, one seam, four-dimensional model, and roadmap.
 - [Architecture](architecture.md): current brain-side, body-side, runtime, feedback, and benchmark roles.
 - [Brain-Body Architecture](architecture-brain-body.md): latest high-level brain/body split, transport diagram, and glossary for intent, RPC, state, and the control contract.
+- [Validation Matrix](validation-matrix.md): validation status by brain-side node, body endpoint, inference/application layer, and seam transport.
 - [Ecosystem Validation Map](ecosystem-validation-map.md): how OpenPAVE helps validate, showcase, compare, and port Physical AI software components.
 - [Physical AI Validation Workflow](physical-ai-validation-workflow.md): project-level positioning for OpenPAVE across local inference, robot/sensor endpoints, middleware, and Arm-based edge platforms.
 
