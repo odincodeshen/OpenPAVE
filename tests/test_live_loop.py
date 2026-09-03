@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest import mock
 
 from pave_runtime.application import create_application_runtime
 from pave_runtime.inference import InferenceResult, Observation
@@ -126,6 +127,31 @@ class LiveLoopTests(unittest.TestCase):
     def test_no_spurious_stop_when_already_stopped(self):
         seam, _ = _drive(["banana", "banana"])           # invalid -> gesture_commander stop
         self.assertEqual(seam.sent, ["stop"])            # dispatched once; no shutdown re-STOP
+
+    def test_error_ticks_are_paced_not_hot_looped(self):
+        # a persistent inference failure must still honor --period-seconds, not spin
+        sleeps: list[float] = []
+
+        async def fake_sleep(d):
+            sleeps.append(d)
+
+        with mock.patch("scripts.run_live.asyncio.sleep", fake_sleep):
+            asyncio.run(
+                run_live(
+                    source=FakeSource(),
+                    runtime=ScriptRuntime([STALL, STALL, STALL]),
+                    application=create_application_runtime("gesture_commander"),
+                    seam=FakeSeam(),
+                    prompt="p",
+                    gate=MotionGate(confirmations=2),
+                    period_s=2.0,
+                    watchdog_s=1.0,
+                    max_ticks=3,
+                    emit=lambda r: None,
+                )
+            )
+        self.assertEqual(len(sleeps), 3)                 # one pacing sleep per (failed) tick
+        self.assertTrue(all(abs(s - 2.0) < 0.5 for s in sleeps))
 
 
 if __name__ == "__main__":

@@ -126,27 +126,26 @@ async def run_live(
                     await seam.send("stop", {}, target=target)
                 emit({"tick": ticks, "event": "watchdog", "error": str(exc),
                       "dispatched": "stop" if stopped else None})
-                ticks += 1
-                continue
-
-            proposal = application.decide(result)
-            normalized = normalize_action_payload(
-                {"action": proposal.action, "params": proposal.params},
-                default_source=application.name,
-            )
-            action = normalized["action"]
-            to_dispatch = gate.admit(action, now_ms)
-            state = None
-            if to_dispatch is not None:
-                state = await seam.send(to_dispatch, normalized["params"], target=target)
-            emit({
-                "tick": ticks,
-                "decided": action,
-                "confirm": gate.count,
-                "dispatched": to_dispatch,
-                "target": target,
-                "state": state,
-            })
+            else:
+                proposal = application.decide(result)
+                normalized = normalize_action_payload(
+                    {"action": proposal.action, "params": proposal.params},
+                    default_source=application.name,
+                )
+                action = normalized["action"]
+                to_dispatch = gate.admit(action, now_ms)
+                state = None
+                if to_dispatch is not None:
+                    state = await seam.send(to_dispatch, normalized["params"], target=target)
+                emit({
+                    "tick": ticks,
+                    "decided": action,
+                    "confirm": gate.count,
+                    "dispatched": to_dispatch,
+                    "target": target,
+                    "state": state,
+                })
+            # pace every tick, including a failing one, so a persistent error can't hot-loop
             ticks += 1
             elapsed = clock() - tick_start
             if period_s and elapsed < period_s:
