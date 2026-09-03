@@ -67,6 +67,33 @@ async def load_observation(path: Path | None, url: str | None = None) -> Observa
     )
 
 
+# F3: map a dispatch result to an explicit outcome + process exit code, so a body-side failure (or an
+# unconfirmed STOP) never exits 0. Exit codes: 0 ok · 3 dispatch failed · 4 blocked by the safety gate ·
+# 5 safety-critical — a STOP/eSTOP (including the automatic lease STOP) did not complete.
+def summarize_outcome(dispatch: dict[str, Any]) -> dict[str, Any]:
+    status = dispatch.get("status")
+    action = dispatch.get("action")
+    if status == "dry_run":
+        return {"ok": True, "exit_code": 0, "kind": "dry_run"}
+    if status == "blocked":
+        return {"ok": False, "exit_code": 4, "kind": "blocked"}
+    if status == "sent_over_seam":
+        lease = dispatch.get("motion_lease") or {}
+        if "auto_stop" in lease and (lease.get("auto_stop") or {}).get("status") != "completed":
+            return {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"}
+        if (dispatch.get("state") or {}).get("status") == "completed":
+            return {"ok": True, "exit_code": 0, "kind": "completed"}
+        if action in ("stop", "estop"):
+            return {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"}
+        return {"ok": False, "exit_code": 3, "kind": "failed"}
+    if status == "completed":
+        return {"ok": True, "exit_code": 0, "kind": "completed"}
+    # in-process rejected / unsupported / failed, or anything unexpected
+    if action in ("stop", "estop"):
+        return {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"}
+    return {"ok": False, "exit_code": 3, "kind": "failed"}
+
+
 async def run_once(
     *,
     runtime_name: str,
@@ -168,7 +195,7 @@ async def run_once(
         }
 
     return {
-        "schema_version": "inference-run-0.1",
+        "schema_version": "inference-run-0.2",
         "observation": {
             "media_type": observation.media_type,
             "source": observation.source,
@@ -180,6 +207,7 @@ async def run_once(
         "proposal": asdict(proposal),
         "capability": normalized,
         "dispatch": dispatch_result,
+        "outcome": summarize_outcome(dispatch_result),
         "latency": {
             "inference_ms": result.latency_ms,
             "application_ms": application_latency_ms,
@@ -261,7 +289,8 @@ def main() -> int:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0
+    # F3: exit code reflects the body outcome (0 ok · 3 failed · 4 blocked · 5 stop unconfirmed).
+    return int(payload.get("outcome", {}).get("exit_code", 0))
 
 
 if __name__ == "__main__":

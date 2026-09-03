@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 from pave_runtime.inference import Observation
-from scripts.run_inference import parse_args, run_once
+from scripts.run_inference import parse_args, run_once, summarize_outcome
 
 
 class FakeSeamTransport:
@@ -80,6 +80,7 @@ class SeamDispatchTests(unittest.TestCase):
         self.assertEqual(payload["dispatch"]["status"], "sent_over_seam")
         self.assertEqual(payload["dispatch"]["state"]["status"], "completed")
         self.assertNotIn("motion_lease", payload["dispatch"])
+        self.assertEqual(payload["outcome"], {"ok": True, "exit_code": 0, "kind": "completed"})
 
     def test_motion_blocked_without_opt_in(self):
         fake = FakeSeamTransport()
@@ -90,6 +91,7 @@ class SeamDispatchTests(unittest.TestCase):
         # a blocked motion must not touch the transport at all: no connection, no send
         self.assertEqual(factory.names, [])
         self.assertEqual(fake.sent, [])
+        self.assertEqual(payload["outcome"]["exit_code"], 4)
 
     def test_motion_with_opt_in_leases_and_auto_stops(self):
         fake = FakeSeamTransport()
@@ -138,6 +140,8 @@ class SeamDispatchTests(unittest.TestCase):
         payload, _ = _run(fake, mock_output="STOP")
         self.assertEqual(payload["dispatch"]["status"], "sent_over_seam")
         self.assertEqual(payload["dispatch"]["state"]["status"], "failed")
+        # a failed STOP is safety-critical: not ok, exit 5
+        self.assertEqual(payload["outcome"], {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"})
 
     def test_dry_run_never_creates_a_transport(self):
         fake = FakeSeamTransport()
@@ -145,6 +149,35 @@ class SeamDispatchTests(unittest.TestCase):
         self.assertEqual(payload["dispatch"]["status"], "dry_run")
         self.assertEqual(factory.names, [])
         self.assertEqual(fake.sent, [])
+
+
+class OutcomeMappingTests(unittest.TestCase):
+    """F3: dispatch result -> explicit outcome + exit code."""
+
+    def test_mapping(self):
+        cases = [
+            ({"status": "dry_run", "action": "trot"}, (True, 0, "dry_run")),
+            ({"status": "blocked", "action": "trot"}, (False, 4, "blocked")),
+            ({"status": "sent_over_seam", "action": "trot", "state": {"status": "completed"}},
+             (True, 0, "completed")),
+            ({"status": "sent_over_seam", "action": "trot", "state": {"status": "failed"}},
+             (False, 3, "failed")),
+            # a failed STOP/eSTOP is safety-critical
+            ({"status": "sent_over_seam", "action": "stop", "state": {"status": "failed"}},
+             (False, 5, "stop_unconfirmed")),
+            # a failed automatic lease STOP is safety-critical even though the motion "completed"
+            ({"status": "sent_over_seam", "action": "trot", "state": {"status": "completed"},
+              "motion_lease": {"auto_stop": {"status": "failed"}}}, (False, 5, "stop_unconfirmed")),
+            ({"status": "sent_over_seam", "action": "trot", "state": {"status": "completed"},
+              "motion_lease": {"auto_stop": {"status": "completed"}}}, (True, 0, "completed")),
+            ({"status": "completed", "action": "trot"}, (True, 0, "completed")),      # in-process mock
+            ({"status": "rejected", "action": "move"}, (False, 3, "failed")),         # in-process reject
+            ({"status": "failed", "action": "stop"}, (False, 5, "stop_unconfirmed")),
+        ]
+        for dispatch, (ok, code, kind) in cases:
+            with self.subTest(dispatch=dispatch):
+                out = summarize_outcome(dispatch)
+                self.assertEqual((out["ok"], out["exit_code"], out["kind"]), (ok, code, kind))
 
 
 class ArgparseTests(unittest.TestCase):
