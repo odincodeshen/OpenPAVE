@@ -1,16 +1,20 @@
 # OpenPAVE Validated Baseline
 
-Baseline version: v1.0
+Baseline version: v1.0 · Reference target: PuppyPi + DGX · Status: validated baseline, not final optimized runtime
 
-Reference target: PuppyPi + DGX
-
-Status: validated baseline, not final optimized runtime
-
-This guide is the primary runbook for reproducing the current OpenPAVE validated baseline.
+> **This is the deep operational reference for the full baseline runtime.**
+> New here? Start with the **[Quickstart](quickstart.md)**. Driving one brain × body combination?
+> Use the per-config **[runbooks](runbooks/)**. Come here for the complete install / vLLM / ROS 2 /
+> benchmark detail that sits behind them.
 
 OpenPAVE Validated Baseline v1.0 proves a local brain-body Physical AI workflow before optimizing transport, control latency, and hardware coverage. It connects a local inference/control node to a robot/sensor endpoint through intent schema validation, runtime control, robot adapters, feedback files, UI observability, and benchmark scenarios.
 
-Use this document as the source of truth for reproducing the current baseline on a DGX/control machine and, optionally, the first validated physical target: PuppyPi.
+## Contents
+
+- **Overview** — [Runtime Flow](#runtime-flow) · [Release Scope](#release-scope) · [Managed Services](#managed-services) · [External Dependencies](#external-dependencies)
+- **Setup** — [Install the UI](#install-live-vlm-webui-observability-ui) · [ROS 2 CLI image](#build-the-custom-ros-2-cli-docker-image) · [ROS 2 middleware](#ros-2-middleware-selection) · [Start vLLM](#start-a-vllm-backend)
+- **Run** — [Basic Usage](#basic-usage) · [Physical PuppyPi validation](#physical-puppypi-validation) · [Manual intent test](#manual-intent-test) · [Debug robot motion](#debug-unexpected-robot-motion)
+- **Verify** — [Benchmarks](#benchmark-validation) · [RC checklist](#release-candidate-validation-checklist) · [Demo startup](#suggested-demo-startup-checklist) · [Stop](#stop)
 
 ## Runtime Flow
 

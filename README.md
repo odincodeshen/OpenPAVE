@@ -231,7 +231,6 @@ Start here:
 
 Core references:
 
-- [Architecture](docs/architecture.md)
 - [Brain-Body Architecture](docs/architecture-brain-body.md)
 - [Demo Integration Levels](docs/demo-integration-levels.md)
 - [Demo Catalogue](docs/demo-catalog.md)

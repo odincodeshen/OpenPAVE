@@ -54,6 +54,29 @@ Every accepted intent is normalized to this shape before being written to the in
 - `raw_text`: original text output when the intent was parsed from text
 - `safety_fallback`: `true` when an unknown text or unsupported intent was mapped to `STOP`
 
+## Intent Ingress API
+
+Submit an intent to the running Intent Ingress with `POST /intent` (default
+`http://127.0.0.1:7071/intent`). A plain-text form:
+
+```json
+{ "text": "STOP" }
+```
+
+or a structured form with params:
+
+```json
+{
+  "intent": "MOVE",
+  "params": { "vx": 0.0, "yaw": 0.6, "duration_ms": 600 },
+  "source": "manual"
+}
+```
+
+The body executes or rejects the request and writes a command result plus updated robot state — see
+[Robot Feedback](robot-feedback.md). The brain-side inference backend is an OpenAI-compatible VLM API
+(default `http://localhost:8000/v1`).
+
 ## Supported Intents
 
 ### STOP

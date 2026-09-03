@@ -47,6 +47,21 @@ A complete OpenPAVE validation configuration is a combination of four dimensions
 
 The brain-side node is treated as a deployment target rather than a normal software plugin. The other three dimensions are expected to become registered plugin surfaces.
 
+### The inference / application dimension is domain-general
+
+The fourth dimension is where OpenPAVE's breadth lives, and it is easy to under-read. **Gesture
+control (camera → VLM → intent → robot) is only one example** of this dimension — a demo that shows
+the concept end to end — not the point of the platform. The same slot holds very different
+applications:
+
+- a **VLM** turning observations into normalized intents (the gesture demo);
+- an **end-to-end VLA policy** driving a robot arm — e.g. SmolVLA + SO-101, per the Arm learning paths;
+- a **planner, an agent, or an external developer's own project** that emits capability commands.
+
+`create_inference_runtime(name)` (roadmap, 2.0) makes this a registered plugin surface like the seam,
+so a new application is a registered backend rather than a fork. Until then OpenPAVE ships an
+OpenAI-compatible VLM API with the gesture demo as its reference application.
+
 ## Config as a Validated Recipe
 
 A config file should bind the selected dimensions into a repeatable recipe:
