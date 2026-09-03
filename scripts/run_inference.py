@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Run one headless OpenPAVE inference/application cycle."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import io
+import json
+import mimetypes
+import os
+import sys
+import time
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from pave_runtime.application import create_application_runtime  # noqa: E402
+from pave_runtime.capability_schema import normalize_action_payload  # noqa: E402
+from pave_runtime.inference import (  # noqa: E402
+    InferenceRequest,
+    InferenceRuntimeError,
+    Observation,
+    create_inference_runtime,
+)
+from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
+
+
+DEFAULT_PROMPT_PRESET = ROOT / "prompts" / "robot-commander-gesture.json"
+MOCK_ADAPTER_NAMES = frozenset({"mock", "dry-run", "dry_run"})
+
+
+def load_prompt(path: Path) -> tuple[str, str]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not str(payload.get("prompt", "")).strip():
+        raise ValueError(f"prompt preset has no non-empty prompt: {path}")
+    return str(payload.get("id", path.stem)), str(payload["prompt"])
+
+
+def load_observation(path: Path | None) -> Observation:
+    if path is None:
+        return Observation(
+            media_type="application/x-openpave-mock",
+            data=b"",
+            source="mock://empty-observation",
+        )
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return Observation(media_type=media_type, data=path.read_bytes(), source=str(path))
+
+
+async def run_once(
+    *,
+    runtime_name: str,
+    application_name: str,
+    observation: Observation,
+    prompt: str,
+    prompt_id: str,
+    mock_output: str | None = None,
+    should_dispatch: bool = False,
+    adapter_name: str = "mock",
+) -> dict[str, Any]:
+    runtime_opts = {"output": mock_output} if runtime_name == "mock" and mock_output is not None else {}
+    runtime = create_inference_runtime(runtime_name, **runtime_opts)
+    application = create_application_runtime(application_name)
+
+    started = time.perf_counter()
+    result = await runtime.infer(InferenceRequest(observation=observation, prompt=prompt))
+    decision_started = time.perf_counter()
+    proposal = application.decide(result)
+    application_latency_ms = round((time.perf_counter() - decision_started) * 1000.0, 3)
+    normalized = normalize_action_payload(
+        {"action": proposal.action, "params": proposal.params},
+        default_source=application.name,
+    )
+
+    if should_dispatch:
+        if adapter_name.strip().lower() not in MOCK_ADAPTER_NAMES:
+            raise ValueError("v1.7 local validation permits dispatch only to the mock adapter")
+        from control_daemon.adapters import create_robot_adapter
+
+        adapter = create_robot_adapter(adapter_name)
+        adapter_output = io.StringIO()
+        with contextlib.redirect_stdout(adapter_output):
+            dispatch_result = dispatch_to_adapter(
+                adapter, normalized["action"], normalized["params"]
+            )
+        log_text = adapter_output.getvalue().strip()
+        if log_text:
+            dispatch_result["adapter_log"] = log_text
+    else:
+        dispatch_result = {
+            "status": "dry_run",
+            "action": normalized["action"],
+            "params": normalized["params"],
+        }
+
+    return {
+        "schema_version": "inference-run-0.1",
+        "observation": {
+            "media_type": observation.media_type,
+            "source": observation.source,
+            "bytes": len(observation.data),
+            "timestamp": observation.timestamp,
+        },
+        "prompt": {"id": prompt_id},
+        "inference": asdict(result),
+        "proposal": asdict(proposal),
+        "capability": normalized,
+        "dispatch": dispatch_result,
+        "latency": {
+            "inference_ms": result.latency_ms,
+            "application_ms": application_latency_ms,
+            "total_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        },
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime", default=None, help="Inference runtime (default: env or mock)")
+    parser.add_argument("--application", default=None, help="Application runtime")
+    parser.add_argument("--input", type=Path, help="Optional local observation file")
+    parser.add_argument("--prompt-preset", type=Path, default=None)
+    parser.add_argument("--mock-output", help="Deterministic output for the mock backend")
+    parser.add_argument("--dispatch", action="store_true", help="Execute the proposal (mock only)")
+    parser.add_argument("--adapter", default="mock", help="Dispatch adapter (v1.7: mock only)")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        prompt_path = args.prompt_preset or Path(
+            os.getenv("PROMPT_PRESET", str(DEFAULT_PROMPT_PRESET))
+        )
+        prompt_id, prompt = load_prompt(prompt_path)
+        payload = asyncio.run(
+            run_once(
+                runtime_name=args.runtime or os.getenv("INFERENCE_RUNTIME", "mock"),
+                application_name=args.application
+                or os.getenv("APPLICATION_RUNTIME", "gesture_commander"),
+                observation=load_observation(args.input),
+                prompt=prompt,
+                prompt_id=prompt_id,
+                mock_output=args.mock_output,
+                should_dispatch=args.dispatch,
+                adapter_name=args.adapter,
+            )
+        )
+    except (OSError, ValueError, json.JSONDecodeError, InferenceRuntimeError) as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
+        return 2
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
