@@ -105,6 +105,7 @@ async def run_once(
     should_dispatch: bool = False,
     adapter_name: str = "mock",
     seam_transport: str | None = None,
+    action_target: str | None = None,
     allow_motion: bool = False,
     motion_hold_seconds: float = 3.0,
 ) -> dict[str, Any]:
@@ -137,6 +138,7 @@ async def run_once(
                 "status": "blocked",
                 "gate": "motion",
                 "transport": seam_transport,
+                "target": action_target,
                 "action": action,
                 "params": params,
                 "reason": (
@@ -148,10 +150,11 @@ async def run_once(
             from pave_runtime.seam import create_seam_transport
 
             seam = create_seam_transport(seam_transport)
-            state = await seam.send(action, params)
+            state = await seam.send(action, params, target=action_target)
             dispatch_result = {
                 "status": "sent_over_seam",
                 "transport": seam_transport,
+                "target": action_target,
                 "action": action,
                 "params": params,
                 "state": state,
@@ -159,13 +162,13 @@ async def run_once(
             if action in MOTION_ACTIONS:
                 # F2 motion lease: hold the motion for a bounded window, then ALWAYS auto-STOP —
                 # including on Ctrl+C or an error during the hold — so the body is never left
-                # marking time after this single-shot command exits.
+                # marking time after this single-shot command exits. The STOP targets the SAME body.
                 hold = max(0.0, motion_hold_seconds)
                 auto_stop_state = None
                 try:
                     await asyncio.sleep(hold)
                 finally:
-                    auto_stop_state = await seam.send("stop", {})
+                    auto_stop_state = await seam.send("stop", {}, target=action_target)
                 dispatch_result["motion_lease"] = {
                     "hold_seconds": hold,
                     "auto_stop": auto_stop_state,
@@ -240,6 +243,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--adapter", default="mock", help="In-process dispatch adapter (mock only)")
     parser.add_argument(
+        "--action-target",
+        default=None,
+        metavar="ID",
+        help="which body to send the action to over --seam (default: env ACTION_TARGET). For "
+        "device_connect this is the body's DEVICE_ID; required when more than one body is online. "
+        "raw_zenoh is point-to-point (addressed by ZENOH_CONNECT) and ignores this.",
+    )
+    parser.add_argument(
         "--allow-motion",
         action="store_true",
         help="allow locomotion verbs (trot/move) over --seam; the CLI then holds the motion for a "
@@ -274,6 +285,7 @@ def main() -> int:
                 should_dispatch=args.dispatch,
                 adapter_name=args.adapter,
                 seam_transport=args.seam,
+                action_target=args.action_target or os.getenv("ACTION_TARGET"),
                 allow_motion=args.allow_motion,
                 motion_hold_seconds=args.motion_hold_seconds,
             )

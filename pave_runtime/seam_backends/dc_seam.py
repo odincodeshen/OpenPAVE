@@ -88,6 +88,18 @@ class DeviceConnectSeam:
             devices = discover_devices(device_type=self.device_type)
             if not devices:
                 return {"status": "no_device", "error": f"no {self.device_type} found", "action": action}
+            if len(devices) > 1:
+                # F4: never silently pick the first of several bodies — that could drive the wrong
+                # robot. Require an explicit target when the discovery is ambiguous.
+                ids = [d.get("device_id") or d.get("id") for d in devices]
+                return {
+                    "status": "rejected",
+                    "action": action,
+                    "error": (
+                        f"ambiguous target: {len(devices)} {self.device_type} devices online "
+                        f"({ids}); pass --action-target / ACTION_TARGET to choose one"
+                    ),
+                }
             dev = devices[0].get("device_id") or devices[0].get("id")
         res = invoke(f"device({dev}).function({action})", params={"params": params or {}})
         return res.get("result", res) if isinstance(res, dict) else res

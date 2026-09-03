@@ -21,10 +21,12 @@ class FakeSeamTransport:
 
     def __init__(self, state_by_action: dict | None = None):
         self.sent: list[tuple[str, dict]] = []
+        self.targets: list = []
         self._state_by_action = state_by_action or {}
 
-    async def send(self, action, params):
-        self.sent.append((action, dict(params)))
+    async def send(self, action, params=None, *, target=None, timeout=5.0):
+        self.sent.append((action, dict(params or {})))
+        self.targets.append(target)
         return self._state_by_action.get(
             action,
             {
@@ -149,6 +151,67 @@ class SeamDispatchTests(unittest.TestCase):
         self.assertEqual(payload["dispatch"]["status"], "dry_run")
         self.assertEqual(factory.names, [])
         self.assertEqual(fake.sent, [])
+
+
+class ActionTargetTests(unittest.TestCase):
+    """F4: --action-target is forwarded to seam.send and recorded in the dispatch."""
+
+    def test_target_is_passed_and_recorded(self):
+        fake = FakeSeamTransport()
+        payload, _ = _run(fake, mock_output="STOP", action_target="puppypi-01")
+        self.assertEqual(fake.targets, ["puppypi-01"])
+        self.assertEqual(payload["dispatch"]["target"], "puppypi-01")
+
+    def test_motion_lease_stop_targets_the_same_body(self):
+        fake = FakeSeamTransport()
+        _run(fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=0.0, action_target="dog-A")
+        # both the motion and its automatic STOP go to the same body
+        self.assertEqual(_actions(fake), ["trot", "stop"])
+        self.assertEqual(fake.targets, ["dog-A", "dog-A"])
+
+
+class DeviceConnectTargetTests(unittest.TestCase):
+    """F4: device_connect must not silently pick a body when discovery is ambiguous."""
+
+    def _send(self, devices, target=None):
+        import sys as _sys
+        import types
+
+        module = types.ModuleType("device_connect_agent_tools")
+        module.connect = lambda *a, **k: None
+        module.discover_devices = lambda **k: list(devices)
+        seen: dict = {}
+
+        def _invoke(selector, params=None):
+            seen["selector"] = selector
+            return {"result": {"status": "completed", "action": "stop"}}
+
+        module.invoke = _invoke
+        from pave_runtime.seam_backends.dc_seam import DeviceConnectSeam
+
+        with mock.patch.dict(_sys.modules, {"device_connect_agent_tools": module}):
+            res = asyncio.run(DeviceConnectSeam().send("stop", {}, target=target))
+        return res, seen
+
+    def test_explicit_target_invokes_that_device(self):
+        res, seen = self._send([{"device_id": "a"}, {"device_id": "b"}], target="b")
+        self.assertEqual(res["status"], "completed")
+        self.assertIn("device(b)", seen["selector"])
+
+    def test_single_device_used_without_target(self):
+        res, seen = self._send([{"device_id": "only"}])
+        self.assertEqual(res["status"], "completed")
+        self.assertIn("device(only)", seen["selector"])
+
+    def test_ambiguous_discovery_is_rejected(self):
+        res, seen = self._send([{"device_id": "a"}, {"device_id": "b"}])
+        self.assertEqual(res["status"], "rejected")
+        self.assertIn("ambiguous", res["error"])
+        self.assertNotIn("selector", seen)  # never invoked a body
+
+    def test_no_device_returns_no_device(self):
+        res, _ = self._send([])
+        self.assertEqual(res["status"], "no_device")
 
 
 class OutcomeMappingTests(unittest.TestCase):

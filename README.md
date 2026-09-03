@@ -245,9 +245,10 @@ reproduction (dog bring-up, brain setup, safe STOP → full chain, cleanup) is i
 
 > ⚠️ **Real-body motion is gated.** Single-shot `--seam` **blocks locomotion (`trot`/`move`)** unless
 > you pass `--allow-motion`, which then holds the motion briefly and issues an **automatic STOP**
-> (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. Still open before merge:
-> multi-observation confirmation, exit-status alignment, multi-endpoint targeting, and real-body
-> tests — use `--allow-motion` only with an operator watching. See the Safety Status in the doc above.
+> (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. The dispatch outcome drives the exit
+> code, and `--action-target` picks which body over `--seam` (`device_connect` rejects an ambiguous
+> multi-body discovery). Still open before merge: a true multi-observation confirmation (belongs in
+> the live loop) — use `--allow-motion` only with an operator watching. See the Safety Status above.
 
 ## Benchmarking
 
