@@ -57,6 +57,7 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 
 ## Releases
 
+- [v1.7.0](releases/v1.7.0.md): Inference/Application runtime plugin — headless `create_inference_runtime` + `vllm_openai` backend, `gesture_commander` application, capability + safety, and `scripts/run_inference.py`; real-DGX validated (RPi5 camera → vLLM → dispatch to mock).
 - [v1.6.0](releases/v1.6.0.md): Quickstart & docs — bilingual Quickstart, per-config runbooks, redesigned architecture diagram, doc reorg, and the domain-general inference-dimension positioning.
 - [v1.5.0-seam](releases/v1.5.0-seam.md): seam transport plugin milestone — plugin + real-brain validation matrix (DGX + Radxa O6 × PuppyPi/camera) + config recipes, tooling, latency model, and single-source dispatch.
 
