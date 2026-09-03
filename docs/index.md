@@ -24,8 +24,7 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 ## Architecture and Positioning
 
 - [OpenPAVE Platform Specification](openpave-platform-spec.md): two-layer brain/body architecture, one seam, four-dimensional model, and roadmap.
-- [Architecture](architecture.md): current brain-side, body-side, runtime, feedback, and benchmark roles.
-- [Brain-Body Architecture](architecture-brain-body.md): latest high-level brain/body split, transport diagram, and glossary for intent, RPC, state, and the control contract.
+- [Brain-Body Architecture](architecture-brain-body.md): the brain/body split, the seam diagram, and the glossary for intent, capability, state, and the control contract.
 - [Validation Matrix](validation-matrix.md): validation status by brain-side node, body endpoint, inference/application layer, and seam transport.
 - [Ecosystem Validation Map](ecosystem-validation-map.md): how OpenPAVE helps validate, showcase, compare, and port Physical AI software components.
 - [Physical AI Validation Workflow](physical-ai-validation-workflow.md): project-level positioning for OpenPAVE across local inference, robot/sensor endpoints, middleware, and Arm-based edge platforms.
@@ -57,6 +56,7 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 
 ## Releases
 
+- [v1.6.0](releases/v1.6.0.md): Quickstart & docs — bilingual Quickstart, per-config runbooks, redesigned architecture diagram, doc reorg, and the domain-general inference-dimension positioning.
 - [v1.5.0-seam](releases/v1.5.0-seam.md): seam transport plugin milestone — plugin + real-brain validation matrix (DGX + Radxa O6 × PuppyPi/camera) + config recipes, tooling, latency model, and single-source dispatch.
 
 ## Notices
@@ -67,6 +67,7 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 
 Historical files are kept under `docs/archive/` for reference. They are not the primary entry point for the current repository.
 
+- [Architecture (superseded)](archive/architecture.md) — folded into the Platform Specification + Brain-Body Architecture
 - [Ver1 README](archive/pave_ver1_readme.md)
 - [Stage 1 Validation Steps](archive/stage1.step.md)
 - [Stage 2 Installation and Validation Steps](archive/stage2.step.md)
