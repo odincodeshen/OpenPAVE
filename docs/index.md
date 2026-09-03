@@ -55,7 +55,7 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 - [DGX → PuppyPi (seam)](runbooks/dgx-puppypi.md) · [Radxa → PuppyPi (seam)](runbooks/radxa-puppypi.md)
 - [DGX → RPi5 camera (seam)](runbooks/dgx-rpicam.md) · [Radxa → RPi5 camera (seam)](runbooks/radxa-rpicam.md)
 - [Gesture control (DGX brain → PuppyPi baseline, ROS 2 path — not the seam)](runbooks/puppypi-gesture-control.md)
-- [Intern Demo Day (general, ROS-free body: RPi 5 camera + servo, dry-run → live loop → swap to PuppyPi)](runbooks/intern-demo-day.md)
+- [v1.8 Quick Demo (general, ROS-free body: RPi 5 camera + servo, dry-run → live loop → swap to PuppyPi)](runbooks/v1.8-quick-demo.md)
 
 ## Releases
 
