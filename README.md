@@ -208,6 +208,49 @@ one-line change to `SEAM_TRANSPORT` (`raw_zenoh` | `device_connect`). Recipes av
 [`puppypi-gesture-control.md`](docs/runbooks/puppypi-gesture-control.md) for the baseline
 gesture-control demo (camera → VLM → intent → robot, over the ROS 2 baseline path — not the seam).
 
+## Live Body: Inference → Real Robot (v1.8, experimental)
+
+v1.8 wires the v1.7 headless inference/application pipeline to a **real body over the seam** — the
+full Physical AI loop from one command:
+
+```text
+camera frame (data plane) -> ObservationSource -> InferenceRuntime -> ApplicationRuntime
+                          -> capability action -> seam (control plane) -> robot actuator
+```
+
+Image bytes stay on the sensor data plane; the seam carries only the resulting low-rate action.
+
+**Observation input** — pick a frame source (`create_observation_source`):
+
+```bash
+python3 scripts/run_inference.py --input frame.jpg                       # local JPEG/PNG
+python3 scripts/run_inference.py --input-url 'http://<ip>:8080/stream?topic=/usb_cam/image_raw'  # HTTP/MJPEG, one frame
+```
+
+**Dispatch** — dry-run by default; `--seam <transport>` sends the validated action to a real body
+(the body-side adapter, e.g. `puppypi_bridge`, runs on the robot):
+
+```bash
+export INFERENCE_RUNTIME=vllm_openai INFERENCE_MODEL=llava-hf/llava-v1.6-mistral-7b-hf
+export SEAM_TRANSPORT=raw_zenoh ZENOH_CONNECT=tcp/<puppypi-ip>:7447
+
+python3 scripts/run_inference.py --input frame.jpg --seam raw_zenoh
+# inference -> gesture_commander -> capability -> seam -> dog  (dispatch.state: completed, path=bridge)
+```
+
+Validated end-to-end on real hardware (2026-09-03): RPi5 camera frame → DGX vLLM (`vllm_openai`, ~1 s)
+→ `gesture_commander` → `raw_zenoh` seam → real PuppyPi (`path=bridge`, ~514 ms). Step-by-step
+reproduction (dog bring-up, brain setup, safe STOP → full chain, cleanup) is in
+**[v1.8 Live Body](docs/v1.8-live-body.md)**.
+
+> ⚠️ **Real-body motion is gated.** Single-shot `--seam` **blocks locomotion (`trot`/`move`)** unless
+> you pass `--allow-motion`, which then holds the motion briefly and issues an **automatic STOP**
+> (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. The dispatch outcome drives the exit
+> code, and `--action-target` picks which body over `--seam` (`device_connect` rejects an ambiguous
+> multi-body discovery). For **continuous control**, `scripts/run_live.py` confirms motion over
+> several frames (edge-triggered dispatch, stall watchdog, fail-safe STOP). Drive a real body only
+> with an operator watching. See the Safety Status above.
+
 ## Benchmarking
 
 Start the runtime, then run:
@@ -238,6 +281,7 @@ Core references:
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
+- [v1.8 Live Body](docs/v1.8-live-body.md) — inference → seam → real robot (experimental)
 - [Benchmark Harness](docs/benchmark-harness.md)
 - [Ecosystem Validation Map](docs/ecosystem-validation-map.md)
 - [Third-Party Notices](docs/third-party-notices.md)

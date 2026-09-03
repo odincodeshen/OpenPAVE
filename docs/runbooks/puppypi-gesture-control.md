@@ -79,7 +79,9 @@ The `/pave` console (WebRTC) takes video from one of:
   no repo script starts the stream yet. To use it you must produce
   `http://<puppypi-ip>:8080/stream?topic=/usb_cam/image_raw` (install `web_video_server` + launch
   `usb_cam`, or serve `/dev/video0` as RTSP) and point the UI's RTSP/stream input at it. **This is an
-  open gap** — the gesture scenario references `:8080` but the repo ships nothing to produce it.
+  open producer gap** — the gesture scenario references `:8080` but the repo ships nothing to
+  produce it. The experimental v1.8 headless path can consume an already-running HTTP/MJPEG stream
+  with `scripts/run_inference.py --input-url`; see `docs/v1.8-live-body.md`.
 
 ## 5. Do the gesture
 

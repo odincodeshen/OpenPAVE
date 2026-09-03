@@ -206,6 +206,46 @@ scripts/seam_run.sh configs/dgx-puppypi.env brain send home  # 在 brain（DGX�
 [`puppypi-gesture-control.md`](docs/runbooks/puppypi-gesture-control.md)——baseline 手勢控制 demo
 （相機 → VLM → intent → 機器人,走 ROS 2 baseline 路徑,不走 seam）。
 
+## Live Body：推論 → 實體機器人（v1.8，實驗性）
+
+v1.8 把 v1.7 的 headless inference/application pipeline 接到**實體 body（走 seam）**——一道指令跑完
+整條 Physical AI 迴路：
+
+```text
+相機影像（data plane）-> ObservationSource -> InferenceRuntime -> ApplicationRuntime
+                     -> capability action -> seam（control plane）-> 機器人致動
+```
+
+影像 bytes 走 sensor data plane;seam 只搬產生出來的低頻 action。
+
+**觀測輸入** —— 選一個取幀來源（`create_observation_source`）：
+
+```bash
+python3 scripts/run_inference.py --input frame.jpg                       # 本地 JPEG/PNG
+python3 scripts/run_inference.py --input-url 'http://<ip>:8080/stream?topic=/usb_cam/image_raw'  # HTTP/MJPEG，取一幀
+```
+
+**派送** —— 預設 dry-run;`--seam <transport>` 把驗證後的 action 送到實體 body（body 端 adapter,
+例如 `puppypi_bridge`,跑在機器人上）：
+
+```bash
+export INFERENCE_RUNTIME=vllm_openai INFERENCE_MODEL=llava-hf/llava-v1.6-mistral-7b-hf
+export SEAM_TRANSPORT=raw_zenoh ZENOH_CONNECT=tcp/<puppypi-ip>:7447
+
+python3 scripts/run_inference.py --input frame.jpg --seam raw_zenoh
+# inference -> gesture_commander -> capability -> seam -> 狗（dispatch.state: completed, path=bridge）
+```
+
+真機端到端已驗證（2026-09-03）：RPi5 相機影像 → DGX vLLM（`vllm_openai`，約 1 秒）→
+`gesture_commander` → `raw_zenoh` seam → 實體 PuppyPi（`path=bridge`，約 514 ms）。逐步復現（狗
+bring-up、brain 設定、先安全 STOP 再跑完整鏈路、清理）見 **[v1.8 Live Body](docs/v1.8-live-body.md)**。
+
+> ⚠️ **真狗運動已加 gate。** 單發 `--seam` **預設擋住運動動詞(`trot`/`move`)**,除非加 `--allow-motion`
+> —— 屆時 CLI 會短暫 hold 後**自動送 STOP**(含 `Ctrl+C`);`stop`/`home`/`estop` 一律放行。dispatch outcome
+> 會驅動 exit code,`--action-target` 指定 `--seam` 送去哪台(`device_connect` 多台歧義時直接拒絕)。**連續控制**
+> 用 `scripts/run_live.py`:運動需連續數幀確認(edge-triggered 派送、卡住看門狗、關機 fail-safe STOP)。
+> 真狗請只在有人看著時驅動。見該文件的 Safety Status。
+
 ## Benchmarking
 
 先啟動 runtime，再執行：
@@ -236,6 +276,7 @@ python3 scripts/summarize_benchmarks.py benchmark-results/*.jsonl
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
+- [v1.8 Live Body](docs/v1.8-live-body.md) —— 推論 → seam → 實體機器人（實驗性）
 - [Benchmark Harness](docs/benchmark-harness.md)
 - [Ecosystem Validation Map](docs/ecosystem-validation-map.md)
 - [Third-Party Notices](docs/third-party-notices.md)

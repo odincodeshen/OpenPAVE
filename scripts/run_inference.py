@@ -8,7 +8,6 @@ import asyncio
 import contextlib
 import io
 import json
-import mimetypes
 import os
 import sys
 import time
@@ -27,11 +26,19 @@ from pave_runtime.inference import (  # noqa: E402
     Observation,
     create_inference_runtime,
 )
+from pave_runtime.observation import (  # noqa: E402
+    ObservationSourceError,
+    create_observation_source,
+)
 from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
 
 
 DEFAULT_PROMPT_PRESET = ROOT / "prompts" / "robot-commander-gesture.json"
 MOCK_ADAPTER_NAMES = frozenset({"mock", "dry-run", "dry_run"})
+# Locomotion verbs that start/continue unattended motion on a real body. Over a single-shot
+# --seam dispatch these are blocked unless the operator opts in with --allow-motion; stop/home/
+# estop are always allowed. See F1/F2 in the v1.8 live-body review.
+MOTION_ACTIONS = frozenset({"trot", "move"})
 
 
 def load_prompt(path: Path) -> tuple[str, str]:
@@ -41,15 +48,50 @@ def load_prompt(path: Path) -> tuple[str, str]:
     return str(payload.get("id", path.stem)), str(payload["prompt"])
 
 
-def load_observation(path: Path | None) -> Observation:
-    if path is None:
-        return Observation(
-            media_type="application/x-openpave-mock",
-            data=b"",
-            source="mock://empty-observation",
+async def load_observation(path: Path | None, url: str | None = None) -> Observation:
+    if path is not None:
+        return await create_observation_source("file", path=path).capture()
+    observation_url = url or os.getenv("OBSERVATION_URL")
+    if observation_url:
+        source = create_observation_source(
+            "http_mjpeg",
+            url=observation_url,
+            timeout_sec=float(os.getenv("OBSERVATION_TIMEOUT_SECONDS", "10")),
+            max_frame_bytes=int(os.getenv("OBSERVATION_MAX_FRAME_BYTES", str(10 * 1024 * 1024))),
         )
-    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return Observation(media_type=media_type, data=path.read_bytes(), source=str(path))
+        return await source.capture()
+    return Observation(
+        media_type="application/x-openpave-mock",
+        data=b"",
+        source="mock://empty-observation",
+    )
+
+
+# F3: map a dispatch result to an explicit outcome + process exit code, so a body-side failure (or an
+# unconfirmed STOP) never exits 0. Exit codes: 0 ok · 3 dispatch failed · 4 blocked by the safety gate ·
+# 5 safety-critical — a STOP/eSTOP (including the automatic lease STOP) did not complete.
+def summarize_outcome(dispatch: dict[str, Any]) -> dict[str, Any]:
+    status = dispatch.get("status")
+    action = dispatch.get("action")
+    if status == "dry_run":
+        return {"ok": True, "exit_code": 0, "kind": "dry_run"}
+    if status == "blocked":
+        return {"ok": False, "exit_code": 4, "kind": "blocked"}
+    if status == "sent_over_seam":
+        lease = dispatch.get("motion_lease") or {}
+        if "auto_stop" in lease and (lease.get("auto_stop") or {}).get("status") != "completed":
+            return {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"}
+        if (dispatch.get("state") or {}).get("status") == "completed":
+            return {"ok": True, "exit_code": 0, "kind": "completed"}
+        if action in ("stop", "estop"):
+            return {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"}
+        return {"ok": False, "exit_code": 3, "kind": "failed"}
+    if status == "completed":
+        return {"ok": True, "exit_code": 0, "kind": "completed"}
+    # in-process rejected / unsupported / failed, or anything unexpected
+    if action in ("stop", "estop"):
+        return {"ok": False, "exit_code": 5, "kind": "stop_unconfirmed"}
+    return {"ok": False, "exit_code": 3, "kind": "failed"}
 
 
 async def run_once(
@@ -62,6 +104,10 @@ async def run_once(
     mock_output: str | None = None,
     should_dispatch: bool = False,
     adapter_name: str = "mock",
+    seam_transport: str | None = None,
+    action_target: str | None = None,
+    allow_motion: bool = False,
+    motion_hold_seconds: float = 3.0,
 ) -> dict[str, Any]:
     runtime_opts = {"output": mock_output} if runtime_name == "mock" and mock_output is not None else {}
     runtime = create_inference_runtime(runtime_name, **runtime_opts)
@@ -77,9 +123,62 @@ async def run_once(
         default_source=application.name,
     )
 
-    if should_dispatch:
+    if seam_transport:
+        # v1.8: dispatch the validated action to a REAL body over the seam. create_seam_transport
+        # picks the backend and reads its env (e.g. ZENOH_CONNECT), exactly like seam_cli.py send —
+        # the body-side adapter (e.g. puppypi_bridge) lives on the robot, not in this process.
+        action = normalized["action"]
+        params = normalized["params"]
+        if action in MOTION_ACTIONS and not allow_motion:
+            # F1/F2 safety gate: a single-shot CLI must not start unattended locomotion on a real
+            # body (the headless path has no TROT confirmation, and the process exits without a
+            # follow-up STOP). Block motion verbs — no connection, no send — unless the operator
+            # opts in with --allow-motion. stop/home/estop always pass.
+            dispatch_result = {
+                "status": "blocked",
+                "gate": "motion",
+                "transport": seam_transport,
+                "target": action_target,
+                "action": action,
+                "params": params,
+                "reason": (
+                    f"motion verb {action!r} requires --allow-motion; single-shot seam dispatch "
+                    "blocks locomotion by default (stop/home/estop always pass)"
+                ),
+            }
+        else:
+            from pave_runtime.seam import create_seam_transport
+
+            seam = create_seam_transport(seam_transport)
+            state = await seam.send(action, params, target=action_target)
+            dispatch_result = {
+                "status": "sent_over_seam",
+                "transport": seam_transport,
+                "target": action_target,
+                "action": action,
+                "params": params,
+                "state": state,
+            }
+            if action in MOTION_ACTIONS:
+                # F2 motion lease: hold the motion for a bounded window, then ALWAYS auto-STOP —
+                # including on Ctrl+C or an error during the hold — so the body is never left
+                # marking time after this single-shot command exits. The STOP targets the SAME body.
+                hold = max(0.0, motion_hold_seconds)
+                auto_stop_state = None
+                try:
+                    await asyncio.sleep(hold)
+                finally:
+                    auto_stop_state = await seam.send("stop", {}, target=action_target)
+                dispatch_result["motion_lease"] = {
+                    "hold_seconds": hold,
+                    "auto_stop": auto_stop_state,
+                }
+    elif should_dispatch:
         if adapter_name.strip().lower() not in MOCK_ADAPTER_NAMES:
-            raise ValueError("v1.7 local validation permits dispatch only to the mock adapter")
+            raise ValueError(
+                "in-process --dispatch permits only the mock adapter; "
+                "use --seam <transport> to reach a real body"
+            )
         from control_daemon.adapters import create_robot_adapter
 
         adapter = create_robot_adapter(adapter_name)
@@ -99,7 +198,7 @@ async def run_once(
         }
 
     return {
-        "schema_version": "inference-run-0.1",
+        "schema_version": "inference-run-0.2",
         "observation": {
             "media_type": observation.media_type,
             "source": observation.source,
@@ -111,6 +210,7 @@ async def run_once(
         "proposal": asdict(proposal),
         "capability": normalized,
         "dispatch": dispatch_result,
+        "outcome": summarize_outcome(dispatch_result),
         "latency": {
             "inference_ms": result.latency_ms,
             "application_ms": application_latency_ms,
@@ -123,11 +223,45 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", default=None, help="Inference runtime (default: env or mock)")
     parser.add_argument("--application", default=None, help="Application runtime")
-    parser.add_argument("--input", type=Path, help="Optional local observation file")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--input", type=Path, help="Local JPEG/PNG observation file")
+    inputs.add_argument(
+        "--input-url",
+        help="HTTP snapshot or MJPEG stream; captures one frame (for example PuppyPi :8080)",
+    )
     parser.add_argument("--prompt-preset", type=Path, default=None)
     parser.add_argument("--mock-output", help="Deterministic output for the mock backend")
-    parser.add_argument("--dispatch", action="store_true", help="Execute the proposal (mock only)")
-    parser.add_argument("--adapter", default="mock", help="Dispatch adapter (v1.7: mock only)")
+    # F6: in-process --dispatch and over-the-seam --seam are mutually exclusive dispatch modes.
+    dispatch = parser.add_mutually_exclusive_group()
+    dispatch.add_argument("--dispatch", action="store_true", help="Execute the proposal in-process (mock only)")
+    dispatch.add_argument(
+        "--seam",
+        default=None,
+        metavar="TRANSPORT",
+        help="v1.8: send the action to a real body over this seam transport (e.g. raw_zenoh); "
+        "needs the brain-side transport env, e.g. ZENOH_CONNECT=tcp/<body>:7447",
+    )
+    parser.add_argument("--adapter", default="mock", help="In-process dispatch adapter (mock only)")
+    parser.add_argument(
+        "--action-target",
+        default=None,
+        metavar="ID",
+        help="which body to send the action to over --seam (default: env ACTION_TARGET). For "
+        "device_connect this is the body's DEVICE_ID; required when more than one body is online. "
+        "raw_zenoh is point-to-point (addressed by ZENOH_CONNECT) and ignores this.",
+    )
+    parser.add_argument(
+        "--allow-motion",
+        action="store_true",
+        help="allow locomotion verbs (trot/move) over --seam; the CLI then holds the motion for a "
+        "bounded window and issues an automatic STOP (see --motion-hold-seconds)",
+    )
+    parser.add_argument(
+        "--motion-hold-seconds",
+        type=float,
+        default=3.0,
+        help="with --allow-motion, seconds to hold a motion action before the automatic STOP (default 3.0)",
+    )
     return parser.parse_args()
 
 
@@ -138,24 +272,37 @@ def main() -> int:
             os.getenv("PROMPT_PRESET", str(DEFAULT_PROMPT_PRESET))
         )
         prompt_id, prompt = load_prompt(prompt_path)
-        payload = asyncio.run(
-            run_once(
+        async def execute() -> dict[str, Any]:
+            observation = await load_observation(args.input, args.input_url)
+            return await run_once(
                 runtime_name=args.runtime or os.getenv("INFERENCE_RUNTIME", "mock"),
                 application_name=args.application
                 or os.getenv("APPLICATION_RUNTIME", "gesture_commander"),
-                observation=load_observation(args.input),
+                observation=observation,
                 prompt=prompt,
                 prompt_id=prompt_id,
                 mock_output=args.mock_output,
                 should_dispatch=args.dispatch,
                 adapter_name=args.adapter,
+                seam_transport=args.seam,
+                action_target=args.action_target or os.getenv("ACTION_TARGET"),
+                allow_motion=args.allow_motion,
+                motion_hold_seconds=args.motion_hold_seconds,
             )
-        )
-    except (OSError, ValueError, json.JSONDecodeError, InferenceRuntimeError) as exc:
+
+        payload = asyncio.run(execute())
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        InferenceRuntimeError,
+        ObservationSourceError,
+    ) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0
+    # F3: exit code reflects the body outcome (0 ok · 3 failed · 4 blocked · 5 stop unconfirmed).
+    return int(payload.get("outcome", {}).get("exit_code", 0))
 
 
 if __name__ == "__main__":
