@@ -2,6 +2,8 @@
 
 ## 面向 Arm-based edge platforms 的 Physical AI demo 開放參考驗證 workflow
 
+> 🐾 **第一次接觸 OpenPAVE?** 從 **[快速上手](docs/quickstart.zh-TW.md)** 開始 —— 五分鐘看懂它是什麼、怎麼跑、接下來讀哪份文件。· English: **[Quickstart](docs/quickstart.md)**
+
 OpenPAVE 幫助開發者在本地端組裝、執行、觀察與比較 Physical AI demos。
 
 它把原本常常分開評估的元件，接成一條可以驗證的 workflow：

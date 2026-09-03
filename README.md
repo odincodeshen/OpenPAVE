@@ -2,6 +2,8 @@
 
 ## An open reference workflow for Physical AI demos on Arm-based edge platforms
 
+> 🐾 **New to OpenPAVE?** Start with the **[Quickstart](docs/quickstart.md)** — five minutes to what it is, how to run it, and which doc to read next. · 中文:**[快速上手](docs/quickstart.zh-TW.md)**
+
 OpenPAVE helps developers assemble, run, observe, and compare local Physical AI demos.
 
 It connects pieces that are often evaluated separately:
