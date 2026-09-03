@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -701,6 +702,138 @@ class LedAdapter(LocomotionCapabilityMixin):
         return self._ok("led_move", {"led": "pulse", "hz": hz, "yaw": yaw})
 
 
+class _DryRunServo:
+    """Servo stand-in that records angle instead of driving GPIO (no hardware / gpiozero missing)."""
+
+    def __init__(self) -> None:
+        self.angles: list[float] = []
+        self.detached = False
+
+    @property
+    def angle(self) -> float | None:
+        return self.angles[-1] if self.angles else None
+
+    @angle.setter
+    def angle(self, v: float) -> None:
+        self.detached = False
+        self.angles.append(float(v))
+
+    def detach(self) -> None:
+        self.detached = True
+
+    def close(self) -> None:
+        self.detach()
+
+
+class GpioServoAdapter(LocomotionCapabilityMixin):
+    """A hobby servo as a general, ROS-free actuator body.
+
+    ``home``/``stop`` center the horn (``stop`` also detaches to relax), ``trot`` sweeps it back and
+    forth continuously in a background thread (mirroring PuppyPi's "running" state — dispatched once,
+    held until ``stop``), and ``move`` steers to an angle from ``params.yaw``. Just another
+    ``CapabilityAdapter`` behind ``{action, params}`` — same seam, same dispatch, no ROS 2. gpiozero
+    is lazy-imported and falls back to dry-run (``SERVO_DRYRUN=1``, or gpiozero missing / no GPIO),
+    so this stays importable and testable anywhere.
+
+    Env: ``SERVO_PIN`` (BCM, default 18), ``SERVO_HOME_DEG`` (0), ``SERVO_SWEEP_DEG`` (40),
+    ``SERVO_SWEEP_HZ`` (2), ``SERVO_DRYRUN``.
+    """
+
+    name = "gpio_servo"
+
+    def __init__(self, servo: Any = None, *, dry_run: bool | None = None, pin: int | None = None,
+                 home_deg: float | None = None, sweep_deg: float | None = None,
+                 sweep_hz: float | None = None) -> None:
+        self.home_deg = float(home_deg if home_deg is not None else os.environ.get("SERVO_HOME_DEG", "0"))
+        self.sweep_deg = float(sweep_deg if sweep_deg is not None else os.environ.get("SERVO_SWEEP_DEG", "40"))
+        self.sweep_hz = float(sweep_hz if sweep_hz is not None else os.environ.get("SERVO_SWEEP_HZ", "2"))
+        if servo is not None:
+            self.servo, self.dry_run = servo, False
+        else:
+            want_dry = (
+                dry_run
+                if dry_run is not None
+                else os.environ.get("SERVO_DRYRUN", "").strip().lower() in ("1", "true", "yes")
+            )
+            self.servo, self.dry_run = self._make_servo(pin, want_dry)
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    @staticmethod
+    def _make_servo(pin: int | None, want_dry: bool) -> "tuple[Any, bool]":
+        if not want_dry:
+            try:
+                from gpiozero import AngularServo  # lazy: no GPIO dep unless a real servo is used
+
+                p = int(pin if pin is not None else os.environ.get("SERVO_PIN", "18"))
+                return AngularServo(p, min_angle=-90, max_angle=90), False
+            except Exception as exc:  # ImportError, or no GPIO on this host
+                print(f"[{now_iso()}] [gpio_servo] gpiozero unavailable ({exc}); running dry")
+        return _DryRunServo(), True
+
+    def _ok(self, step: str, detail: dict[str, object]) -> AdapterActionResult:
+        return AdapterActionResult.ok([{"name": step, "return_code": 0}], detail=detail)
+
+    @staticmethod
+    def _clamp(deg: float) -> float:
+        return max(-90.0, min(90.0, deg))
+
+    def _goto(self, deg: float) -> None:
+        self.servo.angle = self._clamp(deg)
+
+    def _start_sweep(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        hi = self._clamp(self.home_deg + self.sweep_deg)
+        lo = self._clamp(self.home_deg - self.sweep_deg)
+        half = max(0.05, 0.5 / max(self.sweep_hz, 0.1))
+
+        def worker() -> None:
+            toggle = True
+            while self._running:
+                self._goto(hi if toggle else lo)
+                toggle = not toggle
+                time.sleep(half)
+
+        self._thread = threading.Thread(target=worker, name="gpio_servo_sweep", daemon=True)
+        self._thread.start()
+
+    def _stop_sweep(self) -> None:
+        self._running = False
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    def home(self) -> AdapterActionResult:
+        print(f"[{now_iso()}] [gpio_servo] HOME ({self.home_deg}°)")
+        self._stop_sweep()
+        self._goto(self.home_deg)
+        return self._ok("servo_home", {"angle": self.home_deg})
+
+    def stop(self) -> AdapterActionResult:
+        print(f"[{now_iso()}] [gpio_servo] STOP (center + relax)")
+        self._stop_sweep()
+        self._goto(self.home_deg)
+        try:
+            self.servo.detach()
+        except Exception:
+            pass
+        return self._ok("servo_stop", {"angle": self.home_deg, "detached": True})
+
+    def trot(self) -> AdapterActionResult:
+        print(f"[{now_iso()}] [gpio_servo] TROT (sweep ±{self.sweep_deg}° @ {self.sweep_hz} Hz)")
+        self._start_sweep()
+        return self._ok("servo_trot", {"sweep_deg": self.sweep_deg, "hz": self.sweep_hz})
+
+    def move(self, vx: float, yaw: float, duration_ms: int) -> AdapterActionResult:
+        self._stop_sweep()
+        deg = self._clamp(self.home_deg + 90.0 * max(-1.0, min(1.0, yaw)))
+        print(f"[{now_iso()}] [gpio_servo] MOVE (angle {deg:.1f}°) vx={vx} yaw={yaw}")
+        self._goto(deg)
+        return self._ok("servo_move", {"angle": deg, "yaw": yaw})
+
+
 def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
     adapter_name = (name or os.environ.get("ROBOT_ADAPTER", "puppypi")).strip().lower()
 
@@ -716,6 +849,8 @@ def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
         return MockArmAdapter()
     if adapter_name == "led":
         return LedAdapter()
+    if adapter_name in {"gpio_servo", "gpio-servo", "servo"}:
+        return GpioServoAdapter()
     # camera adapters are lazy-imported: control_daemon.camera_adapter pulls in OpenCV only when
     # a frame is actually grabbed, and this keeps adapters.py free of that dependency at import.
     if adapter_name in {"camera_mock", "camera-mock", "camera"}:
