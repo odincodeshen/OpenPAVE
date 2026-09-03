@@ -247,8 +247,9 @@ reproduction (dog bring-up, brain setup, safe STOP → full chain, cleanup) is i
 > you pass `--allow-motion`, which then holds the motion briefly and issues an **automatic STOP**
 > (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. The dispatch outcome drives the exit
 > code, and `--action-target` picks which body over `--seam` (`device_connect` rejects an ambiguous
-> multi-body discovery). Still open before merge: a true multi-observation confirmation (belongs in
-> the live loop) — use `--allow-motion` only with an operator watching. See the Safety Status above.
+> multi-body discovery). For **continuous control**, `scripts/run_live.py` confirms motion over
+> several frames (edge-triggered dispatch, stall watchdog, fail-safe STOP). Drive a real body only
+> with an operator watching. See the Safety Status above.
 
 ## Benchmarking
 

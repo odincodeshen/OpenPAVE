@@ -242,8 +242,9 @@ bring-up、brain 設定、先安全 STOP 再跑完整鏈路、清理）見 **[v1
 
 > ⚠️ **真狗運動已加 gate。** 單發 `--seam` **預設擋住運動動詞(`trot`/`move`)**,除非加 `--allow-motion`
 > —— 屆時 CLI 會短暫 hold 後**自動送 STOP**(含 `Ctrl+C`);`stop`/`home`/`estop` 一律放行。dispatch outcome
-> 會驅動 exit code,`--action-target` 指定 `--seam` 送去哪台(`device_connect` 多台歧義時直接拒絕)。合併前仍未解:
-> 真正的多觀測確認(屬於未來 live loop)—— `--allow-motion` 請只在有人看著機器人時使用。見該文件的 Safety Status。
+> 會驅動 exit code,`--action-target` 指定 `--seam` 送去哪台(`device_connect` 多台歧義時直接拒絕)。**連續控制**
+> 用 `scripts/run_live.py`:運動需連續數幀確認(edge-triggered 派送、卡住看門狗、關機 fail-safe STOP)。
+> 真狗請只在有人看著時驅動。見該文件的 Safety Status。
 
 ## Benchmarking
 
