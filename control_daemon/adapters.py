@@ -596,6 +596,111 @@ class MockArmAdapter:
         return AdapterActionResult.ok(detail={"action": action, "params": params})
 
 
+class _DryRunLed:
+    """LED stand-in that records state instead of driving GPIO (no hardware / gpiozero missing)."""
+
+    def __init__(self) -> None:
+        self.state = "off"
+        self.brightness = 0.0
+        self.animation: tuple | None = None
+
+    def on(self) -> None:
+        self.state, self.brightness, self.animation = "on", 1.0, None
+
+    def off(self) -> None:
+        self.state, self.brightness, self.animation = "off", 0.0, None
+
+    def pulse(self, fade_in_time: float = 1.0, fade_out_time: float = 1.0,
+              n: int | None = None, background: bool = True) -> None:
+        self.state, self.animation = "pulse", ("pulse", fade_in_time)
+
+    def blink(self, on_time: float = 1.0, off_time: float = 1.0,
+              n: int | None = None, background: bool = True) -> None:
+        self.state, self.animation = "blink", ("blink", on_time)
+
+    @property
+    def value(self) -> float:
+        return self.brightness
+
+    @value.setter
+    def value(self, v: float) -> None:
+        self.brightness = float(v)
+        self.state = "dim" if 0.0 < v < 1.0 else ("on" if v >= 1.0 else "off")
+        self.animation = None
+
+    def close(self) -> None:
+        self.off()
+
+
+class LedAdapter(LocomotionCapabilityMixin):
+    """A single PWM LED as a general, ROS-free status body.
+
+    The commanded capability shows as light: ``stop``/``estop`` = solid on, ``home`` = dim,
+    ``trot`` = continuous pulse, ``move`` = pulse whose rate rises with ``|vx|``. gpiozero drives
+    the animation in its own background thread, so each call returns immediately. With no hardware
+    (``LED_DRYRUN=1``, or gpiozero not installed) it runs dry — importable and testable anywhere.
+
+    Env: ``LED_PIN`` (BCM, default 17), ``LED_BLINK_HZ`` (default 2), ``LED_DRYRUN``.
+    """
+
+    name = "led"
+
+    def __init__(self, led: Any = None, *, dry_run: bool | None = None,
+                 pin: int | None = None, blink_hz: float | None = None) -> None:
+        self.blink_hz = float(
+            blink_hz if blink_hz is not None else os.environ.get("LED_BLINK_HZ", "2")
+        )
+        if led is not None:
+            self.led, self.dry_run = led, False
+        else:
+            want_dry = (
+                dry_run
+                if dry_run is not None
+                else os.environ.get("LED_DRYRUN", "").strip().lower() in ("1", "true", "yes")
+            )
+            self.led, self.dry_run = self._make_led(pin, want_dry)
+
+    @staticmethod
+    def _make_led(pin: int | None, want_dry: bool) -> "tuple[Any, bool]":
+        if not want_dry:
+            try:
+                from gpiozero import PWMLED  # lazy: no GPIO dep unless a real LED is used
+
+                p = int(pin if pin is not None else os.environ.get("LED_PIN", "17"))
+                return PWMLED(p), False
+            except Exception as exc:  # ImportError, or no GPIO on this host
+                print(f"[{now_iso()}] [led] gpiozero unavailable ({exc}); running dry")
+        return _DryRunLed(), True
+
+    def _ok(self, step: str, detail: dict[str, object]) -> AdapterActionResult:
+        return AdapterActionResult.ok([{"name": step, "return_code": 0}], detail=detail)
+
+    def _pulse(self, hz: float) -> None:
+        half = max(0.05, 0.5 / max(hz, 0.1))
+        self.led.pulse(fade_in_time=half, fade_out_time=half, n=None, background=True)
+
+    def home(self) -> AdapterActionResult:
+        print(f"[{now_iso()}] [led] HOME (dim)")
+        self.led.value = 0.15
+        return self._ok("led_home", {"led": "dim"})
+
+    def stop(self) -> AdapterActionResult:
+        print(f"[{now_iso()}] [led] STOP (solid on)")
+        self.led.on()
+        return self._ok("led_stop", {"led": "on"})
+
+    def trot(self) -> AdapterActionResult:
+        print(f"[{now_iso()}] [led] TROT (pulse {self.blink_hz} Hz)")
+        self._pulse(self.blink_hz)
+        return self._ok("led_trot", {"led": "pulse", "hz": self.blink_hz})
+
+    def move(self, vx: float, yaw: float, duration_ms: int) -> AdapterActionResult:
+        hz = self.blink_hz * (0.5 + min(1.0, abs(vx)))
+        print(f"[{now_iso()}] [led] MOVE (pulse {hz:.2f} Hz) vx={vx} yaw={yaw}")
+        self._pulse(hz)
+        return self._ok("led_move", {"led": "pulse", "hz": hz, "yaw": yaw})
+
+
 def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
     adapter_name = (name or os.environ.get("ROBOT_ADAPTER", "puppypi")).strip().lower()
 
@@ -609,6 +714,8 @@ def create_robot_adapter(name: str | None = None) -> CapabilityAdapter:
         return PuppyPiBridgeAdapter()  # experimental (B2): bridge with fallback to puppypi_local
     if adapter_name in {"mock_arm", "mock-arm"}:
         return MockArmAdapter()
+    if adapter_name == "led":
+        return LedAdapter()
     # camera adapters are lazy-imported: control_daemon.camera_adapter pulls in OpenCV only when
     # a frame is actually grabbed, and this keeps adapters.py free of that dependency at import.
     if adapter_name in {"camera_mock", "camera-mock", "camera"}:
