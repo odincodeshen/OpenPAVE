@@ -59,6 +59,7 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 
 ## Releases
 
+- [v1.8.1](releases/v1.8.1.md): General ROS-free body — `gpio_servo` (real-hardware validated) and `led` actuator adapters, the [v1.8 Quick Demo](runbooks/v1.8-quick-demo.md) runbook, and the protocol-neutral / adapter-is-the-integration-point spec positioning.
 - [v1.8.0](releases/v1.8.0.md): Live Body — ObservationSource plugin (`--input-url`), real-body dispatch over the seam (`run_inference.py --seam`) with a motion safety gate / lease / outcome exit codes / `--action-target`, and the persistent `scripts/run_live.py` loop (multi-observation confirmation, watchdog, fail-safe STOP); real-dog validated (single-shot + live loop).
 - [v1.7.0](releases/v1.7.0.md): Inference/Application runtime plugin — headless `create_inference_runtime` + `vllm_openai` backend, `gesture_commander` application, capability + safety, and `scripts/run_inference.py`; real-DGX validated (RPi5 camera → vLLM → dispatch to mock).
 - [v1.6.0](releases/v1.6.0.md): Quickstart & docs — bilingual Quickstart, per-config runbooks, redesigned architecture diagram, doc reorg, and the domain-general inference-dimension positioning.

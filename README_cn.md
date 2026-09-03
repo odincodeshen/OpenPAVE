@@ -240,6 +240,10 @@ python3 scripts/run_inference.py --input frame.jpg --seam raw_zenoh
 `gesture_commander` → `raw_zenoh` seam → 實體 PuppyPi（`path=bridge`，約 514 ms）。逐步復現（狗
 bring-up、brain 設定、先安全 STOP 再跑完整鏈路、清理）見 **[v1.8 Live Body](docs/v1.8-live-body.md)**。
 
+**Body 是 plugin。** 同一條 brain 指令,只改 `ROBOT_ADAPTER` 一行,就能驅動 `gpio_servo`(GPIO,**無 ROS 2**)、
+`mock`、或實體 PuppyPi(`puppypi_bridge`,ROS 2)—— seam 與 `{action, params}` 契約都不變。一個通用、無 ROS 2 的
+demo(RPi 5 相機 + 伺服,真機已驗證)就是 [v1.8 Quick Demo](docs/runbooks/v1.8-quick-demo.md)。
+
 > ⚠️ **真狗運動已加 gate。** 單發 `--seam` **預設擋住運動動詞(`trot`/`move`)**,除非加 `--allow-motion`
 > —— 屆時 CLI 會短暫 hold 後**自動送 STOP**(含 `Ctrl+C`);`stop`/`home`/`estop` 一律放行。dispatch outcome
 > 會驅動 exit code,`--action-target` 指定 `--seam` 送去哪台(`device_connect` 多台歧義時直接拒絕)。**連續控制**

@@ -243,6 +243,11 @@ Validated end-to-end on real hardware (2026-09-03): RPi5 camera frame → DGX vL
 reproduction (dog bring-up, brain setup, safe STOP → full chain, cleanup) is in
 **[v1.8 Live Body](docs/v1.8-live-body.md)**.
 
+**The body is a plugin.** The same brain command drives a `gpio_servo` (GPIO, **no ROS 2**), the `mock`
+adapter, or a real PuppyPi (`puppypi_bridge`, ROS 2) by changing only `ROBOT_ADAPTER` — the seam and
+the `{action, params}` contract stay the same. A general, ROS-free demo (RPi 5 camera + servo,
+real-hardware validated) is the [v1.8 Quick Demo](docs/runbooks/v1.8-quick-demo.md).
+
 > ⚠️ **Real-body motion is gated.** Single-shot `--seam` **blocks locomotion (`trot`/`move`)** unless
 > you pass `--allow-motion`, which then holds the motion briefly and issues an **automatic STOP**
 > (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. The dispatch outcome drives the exit
