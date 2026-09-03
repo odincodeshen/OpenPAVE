@@ -243,9 +243,11 @@ Validated end-to-end on real hardware (2026-09-03): RPi5 camera frame → DGX vL
 reproduction (dog bring-up, brain setup, safe STOP → full chain, cleanup) is in
 **[v1.8 Live Body](docs/v1.8-live-body.md)**.
 
-> ⚠️ **Real-body safety is still in progress.** TROT confirmation, a motion lease / auto-STOP, and
-> failure-status alignment are not yet implemented in the headless path. Keep camera-driven runs in
-> **dry-run or mock-dispatch** until these land — see the Safety Status in the doc above.
+> ⚠️ **Real-body motion is gated.** Single-shot `--seam` **blocks locomotion (`trot`/`move`)** unless
+> you pass `--allow-motion`, which then holds the motion briefly and issues an **automatic STOP**
+> (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. Still open before merge:
+> multi-observation confirmation, exit-status alignment, multi-endpoint targeting, and real-body
+> tests — use `--allow-motion` only with an operator watching. See the Safety Status in the doc above.
 
 ## Benchmarking
 

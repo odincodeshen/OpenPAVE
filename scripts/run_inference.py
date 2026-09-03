@@ -35,6 +35,10 @@ from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
 
 DEFAULT_PROMPT_PRESET = ROOT / "prompts" / "robot-commander-gesture.json"
 MOCK_ADAPTER_NAMES = frozenset({"mock", "dry-run", "dry_run"})
+# Locomotion verbs that start/continue unattended motion on a real body. Over a single-shot
+# --seam dispatch these are blocked unless the operator opts in with --allow-motion; stop/home/
+# estop are always allowed. See F1/F2 in the v1.8 live-body review.
+MOTION_ACTIONS = frozenset({"trot", "move"})
 
 
 def load_prompt(path: Path) -> tuple[str, str]:
@@ -74,6 +78,8 @@ async def run_once(
     should_dispatch: bool = False,
     adapter_name: str = "mock",
     seam_transport: str | None = None,
+    allow_motion: bool = False,
+    motion_hold_seconds: float = 3.0,
 ) -> dict[str, Any]:
     runtime_opts = {"output": mock_output} if runtime_name == "mock" and mock_output is not None else {}
     runtime = create_inference_runtime(runtime_name, **runtime_opts)
@@ -93,17 +99,50 @@ async def run_once(
         # v1.8: dispatch the validated action to a REAL body over the seam. create_seam_transport
         # picks the backend and reads its env (e.g. ZENOH_CONNECT), exactly like seam_cli.py send —
         # the body-side adapter (e.g. puppypi_bridge) lives on the robot, not in this process.
-        from pave_runtime.seam import create_seam_transport
+        action = normalized["action"]
+        params = normalized["params"]
+        if action in MOTION_ACTIONS and not allow_motion:
+            # F1/F2 safety gate: a single-shot CLI must not start unattended locomotion on a real
+            # body (the headless path has no TROT confirmation, and the process exits without a
+            # follow-up STOP). Block motion verbs — no connection, no send — unless the operator
+            # opts in with --allow-motion. stop/home/estop always pass.
+            dispatch_result = {
+                "status": "blocked",
+                "gate": "motion",
+                "transport": seam_transport,
+                "action": action,
+                "params": params,
+                "reason": (
+                    f"motion verb {action!r} requires --allow-motion; single-shot seam dispatch "
+                    "blocks locomotion by default (stop/home/estop always pass)"
+                ),
+            }
+        else:
+            from pave_runtime.seam import create_seam_transport
 
-        seam = create_seam_transport(seam_transport)
-        state = await seam.send(normalized["action"], normalized["params"])
-        dispatch_result = {
-            "status": "sent_over_seam",
-            "transport": seam_transport,
-            "action": normalized["action"],
-            "params": normalized["params"],
-            "state": state,
-        }
+            seam = create_seam_transport(seam_transport)
+            state = await seam.send(action, params)
+            dispatch_result = {
+                "status": "sent_over_seam",
+                "transport": seam_transport,
+                "action": action,
+                "params": params,
+                "state": state,
+            }
+            if action in MOTION_ACTIONS:
+                # F2 motion lease: hold the motion for a bounded window, then ALWAYS auto-STOP —
+                # including on Ctrl+C or an error during the hold — so the body is never left
+                # marking time after this single-shot command exits.
+                hold = max(0.0, motion_hold_seconds)
+                auto_stop_state = None
+                try:
+                    await asyncio.sleep(hold)
+                finally:
+                    auto_stop_state = await seam.send("stop", {})
+                dispatch_result["motion_lease"] = {
+                    "hold_seconds": hold,
+                    "auto_stop": auto_stop_state,
+                }
     elif should_dispatch:
         if adapter_name.strip().lower() not in MOCK_ADAPTER_NAMES:
             raise ValueError(
@@ -161,14 +200,28 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prompt-preset", type=Path, default=None)
     parser.add_argument("--mock-output", help="Deterministic output for the mock backend")
-    parser.add_argument("--dispatch", action="store_true", help="Execute the proposal in-process (mock only)")
-    parser.add_argument("--adapter", default="mock", help="In-process dispatch adapter (mock only)")
-    parser.add_argument(
+    # F6: in-process --dispatch and over-the-seam --seam are mutually exclusive dispatch modes.
+    dispatch = parser.add_mutually_exclusive_group()
+    dispatch.add_argument("--dispatch", action="store_true", help="Execute the proposal in-process (mock only)")
+    dispatch.add_argument(
         "--seam",
         default=None,
         metavar="TRANSPORT",
         help="v1.8: send the action to a real body over this seam transport (e.g. raw_zenoh); "
         "needs the brain-side transport env, e.g. ZENOH_CONNECT=tcp/<body>:7447",
+    )
+    parser.add_argument("--adapter", default="mock", help="In-process dispatch adapter (mock only)")
+    parser.add_argument(
+        "--allow-motion",
+        action="store_true",
+        help="allow locomotion verbs (trot/move) over --seam; the CLI then holds the motion for a "
+        "bounded window and issues an automatic STOP (see --motion-hold-seconds)",
+    )
+    parser.add_argument(
+        "--motion-hold-seconds",
+        type=float,
+        default=3.0,
+        help="with --allow-motion, seconds to hold a motion action before the automatic STOP (default 3.0)",
     )
     return parser.parse_args()
 
@@ -193,6 +246,8 @@ def main() -> int:
                 should_dispatch=args.dispatch,
                 adapter_name=args.adapter,
                 seam_transport=args.seam,
+                allow_motion=args.allow_motion,
+                motion_hold_seconds=args.motion_hold_seconds,
             )
 
         payload = asyncio.run(execute())

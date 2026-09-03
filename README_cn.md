@@ -240,8 +240,10 @@ python3 scripts/run_inference.py --input frame.jpg --seam raw_zenoh
 `gesture_commander` → `raw_zenoh` seam → 實體 PuppyPi（`path=bridge`，約 514 ms）。逐步復現（狗
 bring-up、brain 設定、先安全 STOP 再跑完整鏈路、清理）見 **[v1.8 Live Body](docs/v1.8-live-body.md)**。
 
-> ⚠️ **真狗安全機制尚在進行中。** headless 路徑還沒實作 TROT 確認、motion lease / 自動 STOP、以及
-> 失敗狀態對齊。相機驅動的測試在這些完成前請維持 **dry-run 或 mock-dispatch** —— 見該文件的 Safety Status。
+> ⚠️ **真狗運動已加 gate。** 單發 `--seam` **預設擋住運動動詞(`trot`/`move`)**,除非加 `--allow-motion`
+> —— 屆時 CLI 會短暫 hold 後**自動送 STOP**(含 `Ctrl+C`);`stop`/`home`/`estop` 一律放行。合併前仍未解:
+> 多觀測確認、exit 狀態對齊、多 endpoint 指定、真狗自動化測試 —— `--allow-motion` 請只在有人看著機器人時使用。
+> 見該文件的 Safety Status。
 
 ## Benchmarking
 
