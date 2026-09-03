@@ -62,6 +62,29 @@ applications:
 so a new application is a registered backend rather than a fork. Until then OpenPAVE ships an
 OpenAI-compatible VLM API with the gesture demo as its reference application.
 
+### The body dimension is protocol-neutral: adopting a controller is an adapter
+
+Adopting a new body-side controller — the "small brain" that owns actuation — is a **robot adapter**,
+not a framework choice. An adapter maps the capability contract (`{action, params}`: `stop`, `trot`,
+`move`, `home`, …) to whatever that controller natively speaks. The seam carries only `{action,
+params}` (over zenoh), so **both the boundary and the contract are framework-neutral**; OpenPAVE
+deliberately does not standardize the body-internal protocol.
+
+**ROS 2 is one such native interface, not a requirement.** The PuppyPi adapter shells out to ROS 2
+because PuppyPi's controller (`puppy_control`) is a ROS 2 stack — but that lives *inside* the adapter,
+below the seam, and nothing above it knows or cares. Three consequences:
+
+- **The integration point is the adapter, not ROS 2.** A controller reached over serial / CAN, GPIO, a
+  vendor SDK, or HTTP is adopted the same way — and is often simpler, with no ROS 2 stack to bring up.
+- **ROS 2 compatibility is not plug-and-play.** Each ROS 2 robot exposes its own topics, services, and
+  messages, so a ROS 2 controller still needs its own capability mapping.
+- **The real "easy to adopt" criterion** is a clean, callable control interface whose verbs map to
+  `{action, params}` — regardless of protocol. `pave_runtime` itself has no ROS 2 dependency.
+
+Because ROS 2 is common in robotics, a reusable ROS 2 adapter template is a worthwhile *accelerator*
+(turning "copy the PuppyPi adapter" into "fill in a few topic / message names"). It stays an option
+below the seam, never a required layer.
+
 ## Config as a Validated Recipe
 
 A config file should bind the selected dimensions into a repeatable recipe:
