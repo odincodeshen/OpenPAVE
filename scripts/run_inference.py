@@ -62,6 +62,7 @@ async def run_once(
     mock_output: str | None = None,
     should_dispatch: bool = False,
     adapter_name: str = "mock",
+    seam_transport: str | None = None,
 ) -> dict[str, Any]:
     runtime_opts = {"output": mock_output} if runtime_name == "mock" and mock_output is not None else {}
     runtime = create_inference_runtime(runtime_name, **runtime_opts)
@@ -77,9 +78,27 @@ async def run_once(
         default_source=application.name,
     )
 
-    if should_dispatch:
+    if seam_transport:
+        # v1.8: dispatch the validated action to a REAL body over the seam. create_seam_transport
+        # picks the backend and reads its env (e.g. ZENOH_CONNECT), exactly like seam_cli.py send —
+        # the body-side adapter (e.g. puppypi_bridge) lives on the robot, not in this process.
+        from pave_runtime.seam import create_seam_transport
+
+        seam = create_seam_transport(seam_transport)
+        state = await seam.send(normalized["action"], normalized["params"])
+        dispatch_result = {
+            "status": "sent_over_seam",
+            "transport": seam_transport,
+            "action": normalized["action"],
+            "params": normalized["params"],
+            "state": state,
+        }
+    elif should_dispatch:
         if adapter_name.strip().lower() not in MOCK_ADAPTER_NAMES:
-            raise ValueError("v1.7 local validation permits dispatch only to the mock adapter")
+            raise ValueError(
+                "in-process --dispatch permits only the mock adapter; "
+                "use --seam <transport> to reach a real body"
+            )
         from control_daemon.adapters import create_robot_adapter
 
         adapter = create_robot_adapter(adapter_name)
@@ -126,8 +145,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, help="Optional local observation file")
     parser.add_argument("--prompt-preset", type=Path, default=None)
     parser.add_argument("--mock-output", help="Deterministic output for the mock backend")
-    parser.add_argument("--dispatch", action="store_true", help="Execute the proposal (mock only)")
-    parser.add_argument("--adapter", default="mock", help="Dispatch adapter (v1.7: mock only)")
+    parser.add_argument("--dispatch", action="store_true", help="Execute the proposal in-process (mock only)")
+    parser.add_argument("--adapter", default="mock", help="In-process dispatch adapter (mock only)")
+    parser.add_argument(
+        "--seam",
+        default=None,
+        metavar="TRANSPORT",
+        help="v1.8: send the action to a real body over this seam transport (e.g. raw_zenoh); "
+        "needs the brain-side transport env, e.g. ZENOH_CONNECT=tcp/<body>:7447",
+    )
     return parser.parse_args()
 
 
@@ -149,6 +175,7 @@ def main() -> int:
                 mock_output=args.mock_output,
                 should_dispatch=args.dispatch,
                 adapter_name=args.adapter,
+                seam_transport=args.seam,
             )
         )
     except (OSError, ValueError, json.JSONDecodeError, InferenceRuntimeError) as exc:
