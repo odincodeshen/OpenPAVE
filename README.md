@@ -208,6 +208,45 @@ one-line change to `SEAM_TRANSPORT` (`raw_zenoh` | `device_connect`). Recipes av
 [`puppypi-gesture-control.md`](docs/runbooks/puppypi-gesture-control.md) for the baseline
 gesture-control demo (camera → VLM → intent → robot, over the ROS 2 baseline path — not the seam).
 
+## Live Body: Inference → Real Robot (v1.8, experimental)
+
+v1.8 wires the v1.7 headless inference/application pipeline to a **real body over the seam** — the
+full Physical AI loop from one command:
+
+```text
+camera frame (data plane) -> ObservationSource -> InferenceRuntime -> ApplicationRuntime
+                          -> capability action -> seam (control plane) -> robot actuator
+```
+
+Image bytes stay on the sensor data plane; the seam carries only the resulting low-rate action.
+
+**Observation input** — pick a frame source (`create_observation_source`):
+
+```bash
+python3 scripts/run_inference.py --input frame.jpg                       # local JPEG/PNG
+python3 scripts/run_inference.py --input-url 'http://<ip>:8080/stream?topic=/usb_cam/image_raw'  # HTTP/MJPEG, one frame
+```
+
+**Dispatch** — dry-run by default; `--seam <transport>` sends the validated action to a real body
+(the body-side adapter, e.g. `puppypi_bridge`, runs on the robot):
+
+```bash
+export INFERENCE_RUNTIME=vllm_openai INFERENCE_MODEL=llava-hf/llava-v1.6-mistral-7b-hf
+export SEAM_TRANSPORT=raw_zenoh ZENOH_CONNECT=tcp/<puppypi-ip>:7447
+
+python3 scripts/run_inference.py --input frame.jpg --seam raw_zenoh
+# inference -> gesture_commander -> capability -> seam -> dog  (dispatch.state: completed, path=bridge)
+```
+
+Validated end-to-end on real hardware (2026-09-03): RPi5 camera frame → DGX vLLM (`vllm_openai`, ~1 s)
+→ `gesture_commander` → `raw_zenoh` seam → real PuppyPi (`path=bridge`, ~514 ms). Step-by-step
+reproduction (dog bring-up, brain setup, safe STOP → full chain, cleanup) is in
+**[v1.8 Live Body](docs/v1.8-live-body.md)**.
+
+> ⚠️ **Real-body safety is still in progress.** TROT confirmation, a motion lease / auto-STOP, and
+> failure-status alignment are not yet implemented in the headless path. Keep camera-driven runs in
+> **dry-run or mock-dispatch** until these land — see the Safety Status in the doc above.
+
 ## Benchmarking
 
 Start the runtime, then run:
@@ -238,6 +277,7 @@ Core references:
 - [Intent Schema](docs/intent-schema.md)
 - [Robot Adapters](docs/robot-adapters.md)
 - [Robot Feedback](docs/robot-feedback.md)
+- [v1.8 Live Body](docs/v1.8-live-body.md) — inference → seam → real robot (experimental)
 - [Benchmark Harness](docs/benchmark-harness.md)
 - [Ecosystem Validation Map](docs/ecosystem-validation-map.md)
 - [Third-Party Notices](docs/third-party-notices.md)
