@@ -8,7 +8,6 @@ import asyncio
 import contextlib
 import io
 import json
-import mimetypes
 import os
 import sys
 import time
@@ -27,6 +26,10 @@ from pave_runtime.inference import (  # noqa: E402
     Observation,
     create_inference_runtime,
 )
+from pave_runtime.observation import (  # noqa: E402
+    ObservationSourceError,
+    create_observation_source,
+)
 from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
 
 
@@ -41,15 +44,23 @@ def load_prompt(path: Path) -> tuple[str, str]:
     return str(payload.get("id", path.stem)), str(payload["prompt"])
 
 
-def load_observation(path: Path | None) -> Observation:
-    if path is None:
-        return Observation(
-            media_type="application/x-openpave-mock",
-            data=b"",
-            source="mock://empty-observation",
+async def load_observation(path: Path | None, url: str | None = None) -> Observation:
+    if path is not None:
+        return await create_observation_source("file", path=path).capture()
+    observation_url = url or os.getenv("OBSERVATION_URL")
+    if observation_url:
+        source = create_observation_source(
+            "http_mjpeg",
+            url=observation_url,
+            timeout_sec=float(os.getenv("OBSERVATION_TIMEOUT_SECONDS", "10")),
+            max_frame_bytes=int(os.getenv("OBSERVATION_MAX_FRAME_BYTES", str(10 * 1024 * 1024))),
         )
-    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return Observation(media_type=media_type, data=path.read_bytes(), source=str(path))
+        return await source.capture()
+    return Observation(
+        media_type="application/x-openpave-mock",
+        data=b"",
+        source="mock://empty-observation",
+    )
 
 
 async def run_once(
@@ -142,7 +153,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", default=None, help="Inference runtime (default: env or mock)")
     parser.add_argument("--application", default=None, help="Application runtime")
-    parser.add_argument("--input", type=Path, help="Optional local observation file")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--input", type=Path, help="Local JPEG/PNG observation file")
+    inputs.add_argument(
+        "--input-url",
+        help="HTTP snapshot or MJPEG stream; captures one frame (for example PuppyPi :8080)",
+    )
     parser.add_argument("--prompt-preset", type=Path, default=None)
     parser.add_argument("--mock-output", help="Deterministic output for the mock backend")
     parser.add_argument("--dispatch", action="store_true", help="Execute the proposal in-process (mock only)")
@@ -164,12 +180,13 @@ def main() -> int:
             os.getenv("PROMPT_PRESET", str(DEFAULT_PROMPT_PRESET))
         )
         prompt_id, prompt = load_prompt(prompt_path)
-        payload = asyncio.run(
-            run_once(
+        async def execute() -> dict[str, Any]:
+            observation = await load_observation(args.input, args.input_url)
+            return await run_once(
                 runtime_name=args.runtime or os.getenv("INFERENCE_RUNTIME", "mock"),
                 application_name=args.application
                 or os.getenv("APPLICATION_RUNTIME", "gesture_commander"),
-                observation=load_observation(args.input),
+                observation=observation,
                 prompt=prompt,
                 prompt_id=prompt_id,
                 mock_output=args.mock_output,
@@ -177,8 +194,15 @@ def main() -> int:
                 adapter_name=args.adapter,
                 seam_transport=args.seam,
             )
-        )
-    except (OSError, ValueError, json.JSONDecodeError, InferenceRuntimeError) as exc:
+
+        payload = asyncio.run(execute())
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        InferenceRuntimeError,
+        ObservationSourceError,
+    ) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2))

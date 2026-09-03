@@ -7,6 +7,7 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 - [Quickstart](quickstart.md) · [快速上手](quickstart.zh-TW.md): **new here? start with this** — five minutes to what OpenPAVE is, how to run it, and which doc to read next.
 - [OpenPAVE Platform Specification](openpave-platform-spec.md): project specification, goals, four-dimensional model, repository policy, and roadmap.
 - [v1.7 Inference/Application Runtime Plugin Specification](v1.7_spec.md): construction specification for the headless inference and application plugin boundary.
+- [v1.8 Live Body](v1.8-live-body.md): experimental PuppyPi HTTP/MJPEG observation input and live-body integration status.
 - [Validation Matrix](validation-matrix.md): evidence map for validated, experimental, partial, and candidate hardware/workflow combinations.
 - [Seam Validation Runbook](seam-validation-runbook.md): reproduce the real-brain seam matrix (brain × body × transport) with the four-dimension config recipes, `deploy_seam.sh`, and `seam_run.sh`.
 - [Seam Latency Model](latency-model.md): three-segment (inference / seam / execution) latency breakdown with measured numbers and `seam_bench.py`.
