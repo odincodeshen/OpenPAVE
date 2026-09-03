@@ -40,6 +40,10 @@ class InferenceResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class InferenceRuntimeError(RuntimeError):
+    """Raised when a selected inference backend cannot return a valid result."""
+
+
 @runtime_checkable
 class InferenceRuntime(Protocol):
     name: str
@@ -50,6 +54,7 @@ class InferenceRuntime(Protocol):
 
 _BACKENDS: dict[str, str] = {
     "mock": "pave_runtime.inference_backends.mock:MockInferenceRuntime",
+    "vllm_openai": "pave_runtime.inference_backends.vllm_openai:VllmOpenAIRuntime",
 }
 
 

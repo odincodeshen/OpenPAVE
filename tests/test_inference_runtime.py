@@ -29,12 +29,17 @@ class InferenceRegistryTests(unittest.TestCase):
             create_inference_runtime("missing")
 
     def test_backend_is_lazy(self):
-        module = "pave_runtime.inference_backends.mock"
-        sys.modules.pop(module, None)
-        self.assertIn("mock", inference._BACKENDS)
-        self.assertNotIn(module, sys.modules)
-        create_inference_runtime("mock")
-        self.assertIn(module, sys.modules)
+        modules = {
+            "mock": "pave_runtime.inference_backends.mock",
+            "vllm_openai": "pave_runtime.inference_backends.vllm_openai",
+        }
+        for name, module in modules.items():
+            with self.subTest(name=name):
+                sys.modules.pop(module, None)
+                self.assertIn(name, inference._BACKENDS)
+                self.assertNotIn(module, sys.modules)
+                create_inference_runtime(name)
+                self.assertIn(module, sys.modules)
 
     def test_mock_backend_returns_deterministic_result(self):
         runtime = create_inference_runtime("mock", output="TROT")

@@ -23,6 +23,7 @@ from pave_runtime.application import create_application_runtime  # noqa: E402
 from pave_runtime.capability_schema import normalize_action_payload  # noqa: E402
 from pave_runtime.inference import (  # noqa: E402
     InferenceRequest,
+    InferenceRuntimeError,
     Observation,
     create_inference_runtime,
 )
@@ -150,7 +151,7 @@ def main() -> int:
                 adapter_name=args.adapter,
             )
         )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, InferenceRuntimeError) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2))
