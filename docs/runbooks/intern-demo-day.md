@@ -1,0 +1,178 @@
+# Runbook: Intern Demo Day — a general, ROS-free body (servo)
+
+Run the full OpenPAVE loop end to end on **general hardware**: a camera and one hobby servo on a
+Raspberry Pi 5, driven by a brain node — **no ROS 2, no special robot**. Then, as a showcase, swap one
+line to drive the PuppyPi instead. Self-contained for a first-timer.
+
+| Piece | Host | Role |
+| --- | --- | --- |
+| Brain | DGX (e.g. `192.168.0.24`) | inference (vLLM) + the live loop `run_live.py` |
+| Body + camera | RPi 5 (e.g. `192.168.0.21`) | USB camera (sensor) **and** a servo (actuator), served over the seam |
+
+## What you'll build
+
+```text
+camera frame ──http──▶ run_live (brain): observe → infer → decide → CONFIRM
+                                    │
+                             {action, params}  ──seam (zenoh)──▶  servo body (RPi 5)
+                                                                   └─ gpio_servo adapter → GPIO18
+```
+
+**Mental model:** the *brain* decides an action, the *seam* (zenoh) carries only `{action, params}`,
+and the *body* is a **plugin** (`ROBOT_ADAPTER`). The servo adapter talks straight to GPIO — **ROS 2
+is not involved**. Swapping `ROBOT_ADAPTER=gpio_servo` → `puppypi_bridge` drives a quadruped over ROS 2
+with the *same* brain command. That swap is the whole point of the platform.
+
+## 1. Safety card (read first)
+
+- The servo is small and low-risk, but treat every real-body run with care.
+- **Keep the servo light** — tape a small paper flag on the horn, no load. A stalled/loaded servo can
+  spike current and **reboot the Pi**. If the Pi resets, move the servo's V+ to an external 5 V supply
+  (common ground with the Pi).
+- **How to stop:** `run_live` STOPs the body automatically on `Ctrl+C`, on error, and when a bounded
+  run ends. To stop by hand from the brain: `python scripts/seam_cli.py send stop` (with the same seam
+  env). Worst case: unplug the servo's V+.
+- Always **start in dry-run** (Demo 1) before touching real GPIO.
+
+## 2. Hardware & wiring (one-time)
+
+- 1× hobby micro-servo (SG90/MG90-class), 3-wire.
+- The servo's 3-pin plug is **female**, so it seats directly on the Pi's male header pins. **Separate
+  the 3-way plug into 3 individual contacts** (gently release each terminal), then push each onto its
+  Pi pin:
+
+| Servo wire | Pi pin | Note |
+| --- | --- | --- |
+| Signal (orange/white) | **GPIO18 — physical pin 12** | |
+| V+ (red, middle) | **5V — physical pin 2** (or 4) | ⚠️ not pin 1 (that's 3V3), not a GPIO |
+| GND (brown/black) | **GND — physical pin 6** | if you use an external 5 V, tie its ground here too |
+
+No resistor is needed for a servo (unlike an LED).
+
+## 3. One-time bring-up (each demo session)
+
+**a. Preflight the servo** (on the RPi 5, bypasses OpenPAVE):
+
+```bash
+~/.venv-zenoh/bin/python -c "from gpiozero import AngularServo; import time; \
+s=AngularServo(18,min_angle=-90,max_angle=90); s.angle=0; time.sleep(1); \
+s.angle=45; time.sleep(1); s.angle=-45; time.sleep(1); s.detach()"
+```
+The servo sweeps → wiring OK. (If `gpiozero` is missing, the venv needs system packages:
+`include-system-site-packages = true` in `~/.venv-zenoh/pyvenv.cfg`, since Raspberry Pi OS ships
+`python3-gpiozero` + `python3-lgpio` via apt.)
+
+**b. Start the camera source** (on the RPi 5): the PuppyPi has no `web_video_server`, so serve one JPEG
+snapshot per request from the USB camera:
+
+```bash
+cat > /tmp/snap_server.py <<'PY'
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import cv2
+cap = cv2.VideoCapture(0)
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        for _ in range(2): cap.read()
+        ok, f = cap.read()
+        if not ok:
+            self.send_response(503); self.end_headers(); return
+        _, jpg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 85]); b = jpg.tobytes()
+        self.send_response(200); self.send_header('Content-Type','image/jpeg')
+        self.send_header('Content-Length', str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+HTTPServer(('0.0.0.0', 8090), H).serve_forever()
+PY
+setsid ~/.venv-zenoh/bin/python /tmp/snap_server.py >/tmp/snap.log 2>&1 </dev/null &
+curl -s -o /dev/null -w "snapshot HTTP %{http_code}\n" http://127.0.0.1:8090/   # expect 200
+```
+
+**c. Start vLLM** (on the DGX; only Demo 3 needs it):
+
+```bash
+~/OpenPAVE/.venv/bin/vllm serve llava-hf/llava-v1.6-mistral-7b-hf \
+  --host 0.0.0.0 --port 8000 --dtype float16 --max-model-len 3072 \
+  --gpu-memory-utilization 0.55 --enforce-eager
+# wait until  curl -s http://127.0.0.1:8000/v1/models  lists the model
+```
+
+## 4. Demo 1 — prove the pipeline, zero risk (dry-run)
+
+The servo adapter runs in **dry-run** (logs, no GPIO), so nothing moves.
+
+```bash
+# RPi 5 — servo body in dry-run
+SERVO_DRYRUN=1 ROBOT_ADAPTER=gpio_servo SEAM_TRANSPORT=raw_zenoh ZENOH_LISTEN=tcp/0.0.0.0:7447 \
+  ~/.venv-zenoh/bin/python scripts/seam_cli.py serve
+```
+```bash
+# DGX — force TROT with the mock runtime (no vLLM needed)
+cd ~/openpave
+SEAM_TRANSPORT=raw_zenoh ZENOH_CONNECT=tcp/<RPI5_IP>:7447 \
+INFERENCE_RUNTIME=mock MOCK_INFERENCE_OUTPUT=TROT \
+PYTHONPATH=$HOME/openpave $HOME/.venv-zenoh/bin/python scripts/run_live.py \
+  --input-url http://<RPI5_IP>:8090/ --transport raw_zenoh --runtime mock \
+  --confirmations 2 --period-seconds 1 --max-seconds 8
+```
+Watch the **body** terminal print `[gpio_servo] TROT (sweep …)` then `STOP` at the end. This validates
+camera → inference → **confirmation** → seam → actuator decision, with no hardware risk.
+
+## 5. Demo 2 — real servo, controlled motion (mock TROT)
+
+Same as Demo 1 but the body drives the **real** servo (drop `SERVO_DRYRUN`). Deterministic motion
+without depending on the model — good for a first live run.
+
+```bash
+# RPi 5 — real servo body
+ROBOT_ADAPTER=gpio_servo SEAM_TRANSPORT=raw_zenoh ZENOH_LISTEN=tcp/0.0.0.0:7447 \
+  ~/.venv-zenoh/bin/python scripts/seam_cli.py serve
+```
+Run the same DGX command as Demo 1. Expected: the servo stays still for the first frame (`confirm 1`),
+**starts sweeping on the 2nd** (`confirm 2` → `trot`), holds, and **auto-centers when the run ends**
+(the shutdown STOP). That start-still-then-sweep is the multi-observation confirmation gate.
+
+## 6. Demo 3 — real servo, real perception (vLLM + camera)
+
+Now the model decides from the live camera. Point the camera at yourself.
+
+```bash
+# DGX — real vLLM, real camera, real servo
+cd ~/openpave
+SEAM_TRANSPORT=raw_zenoh ZENOH_CONNECT=tcp/<RPI5_IP>:7447 \
+INFERENCE_API_BASE=http://127.0.0.1:8000/v1 INFERENCE_MODEL=llava-hf/llava-v1.6-mistral-7b-hf \
+PYTHONPATH=$HOME/openpave $HOME/.venv-zenoh/bin/python scripts/run_live.py \
+  --input-url http://<RPI5_IP>:8090/ --transport raw_zenoh --confirmations 2 \
+  --period-seconds 2 --max-seconds 30
+```
+Each tick prints a JSONL line (`decided`, `confirm`, `dispatched`). A clear "go" gesture held for two
+frames confirms `trot` → the servo sweeps; anything else falls back to `stop` → the servo centers.
+`Ctrl+C` any time — the loop STOPs the servo on the way out.
+
+## 7. Showcase — swap the body to PuppyPi (one line)
+
+The same brain command drives a real quadruped over ROS 2 by changing only the adapter. Bring up the
+dog (`scripts/switch_puppypi_ros2.sh`, then `scripts/seam_run.sh configs/dgx-puppypi.env body`), then
+point the brain at it — see [`docs/runbooks/dgx-puppypi.md`](dgx-puppypi.md) and
+[`docs/v1.8-live-body.md`](../v1.8-live-body.md). Only `ROBOT_ADAPTER` changed; the seam, the
+contract, and the brain did not.
+
+## 8. Teardown
+
+```bash
+# RPi 5 — stop the body and the camera server
+pkill -f "seam_cli.py serve"; pkill -f snap_server.py
+# DGX — free the GPU (kill the engine child too, or the next start fails)
+pkill -9 -f "[v]llm serve"; pkill -9 -f "VLLM::EngineCore"
+```
+
+## 9. Troubleshooting
+
+- **Servo doesn't move** — recheck the 3 pins (signal→12, V+→2, GND→6); rerun the §3a preflight; a
+  wrong pin or a loose single-contact seat is the usual cause.
+- **Pi reboots when the servo moves** — current spike; remove any load, or power V+ from an external
+  5 V supply with a common ground.
+- **`decided` never becomes `trot`** — the confirmation gate is working; hold a clear, steady gesture
+  for at least `--confirmations` frames within the window.
+- **`run_live` prints `event: watchdog … Connection refused`** — the camera server or vLLM isn't up; it
+  fails safe (no motion). Restart the missing piece (§3b / §3c).
+- **`vllm serve` fails with `init_device` / `Engine core initialization failed`** — a leftover
+  `VLLM::EngineCore` is holding the GPU; `pkill -9 -f "VLLM::EngineCore"` then restart.
