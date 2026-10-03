@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import json
 import os
 import sys
@@ -38,6 +37,12 @@ from pave_runtime.inference import (  # noqa: E402
 )
 from pave_runtime.observation import ObservationSourceError, create_observation_source  # noqa: E402
 from pave_runtime.seam import create_seam_transport  # noqa: E402
+from pave_runtime.shutdown import (  # noqa: E402
+    STOP_UNCONFIRMED_EXIT,
+    ShutdownRequested,
+    StopUnconfirmed,
+    run_with_graceful_shutdown,
+)
 from scripts.run_inference import DEFAULT_PROMPT_PRESET, load_prompt  # noqa: E402
 
 MOTION_ACTIONS = frozenset({"trot", "move"})
@@ -151,11 +156,17 @@ async def run_live(
             if period_s and elapsed < period_s:
                 await asyncio.sleep(period_s - elapsed)
     finally:
-        # always leave the body stopped
+        # always leave the body stopped — and say so loudly if that STOP could not be confirmed
         if gate.force_stop():
-            with contextlib.suppress(Exception):
-                await seam.send("stop", {}, target=target)
-            emit({"event": "shutdown_stop", "dispatched": "stop"})
+            try:
+                stop_state = await seam.send("stop", {}, target=target)
+                stop_ok = (stop_state or {}).get("status") == "completed"
+            except Exception as exc:  # a failed send must not hide that the body may still move
+                stop_state = {"status": "error", "error": str(exc)}
+                stop_ok = False
+            emit({"event": "shutdown_stop", "dispatched": "stop", "state": stop_state})
+            if not stop_ok:
+                raise StopUnconfirmed(stop_state)
 
 
 def parse_args() -> argparse.Namespace:
@@ -215,7 +226,8 @@ def main() -> int:
         print(json.dumps(record, ensure_ascii=False), flush=True)
 
     try:
-        asyncio.run(
+        # SIGINT, SIGTERM and SIGHUP (e.g. an SSH drop) all cancel the loop so its finally STOPs the body
+        run_with_graceful_shutdown(
             run_live(
                 source=source,
                 runtime=runtime,
@@ -231,6 +243,12 @@ def main() -> int:
                 emit=emit,
             )
         )
+    except ShutdownRequested as exc:
+        emit({"event": "interrupted", "signal": exc.signal_name})
+        return exc.exit_code
+    except StopUnconfirmed as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
+        return STOP_UNCONFIRMED_EXIT
     except KeyboardInterrupt:
         return 130
     return 0

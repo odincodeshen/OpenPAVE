@@ -13,6 +13,7 @@ from unittest import mock
 
 from pave_runtime.application import create_application_runtime
 from pave_runtime.inference import InferenceResult, Observation
+from pave_runtime.shutdown import StopUnconfirmed
 from scripts.run_live import MotionGate, run_live
 
 STALL = object()
@@ -127,6 +128,83 @@ class LiveLoopTests(unittest.TestCase):
     def test_no_spurious_stop_when_already_stopped(self):
         seam, _ = _drive(["banana", "banana"])           # invalid -> gesture_commander stop
         self.assertEqual(seam.sent, ["stop"])            # dispatched once; no shutdown re-STOP
+
+    def test_unconfirmed_shutdown_stop_is_loud(self):
+        # if the final STOP cannot be confirmed the body may still be moving: raise, don't swallow
+        class StopFails(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "stop":
+                    return {"status": "failed", "action": "stop"}
+                return {"status": "completed", "action": action}
+
+        seam = StopFails()
+        with self.assertRaises(StopUnconfirmed) as ctx:
+            asyncio.run(
+                run_live(
+                    source=FakeSource(),
+                    runtime=ScriptRuntime(["TROT", "TROT"]),
+                    application=create_application_runtime("gesture_commander"),
+                    seam=seam,
+                    prompt="p",
+                    gate=MotionGate(confirmations=2),
+                    watchdog_s=1.0,
+                    max_ticks=2,
+                    emit=lambda r: None,
+                )
+            )
+        self.assertEqual(seam.sent, ["trot", "stop"])  # it did try to STOP
+        self.assertEqual(ctx.exception.state["status"], "failed")
+
+    def test_stop_that_raises_is_loud_too(self):
+        class StopRaises(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "stop":
+                    raise RuntimeError("transport down")
+                return {"status": "completed", "action": action}
+
+        with self.assertRaises(StopUnconfirmed):
+            asyncio.run(
+                run_live(
+                    source=FakeSource(),
+                    runtime=ScriptRuntime(["TROT", "TROT"]),
+                    application=create_application_runtime("gesture_commander"),
+                    seam=StopRaises(),
+                    prompt="p",
+                    gate=MotionGate(confirmations=2),
+                    watchdog_s=1.0,
+                    max_ticks=2,
+                    emit=lambda r: None,
+                )
+            )
+
+    def test_cancellation_mid_motion_still_stops_the_body(self):
+        # what a SIGTERM/SIGHUP does: cancel the loop task while the body is moving
+        async def scenario():
+            seam = FakeSeam()
+            task = asyncio.ensure_future(
+                run_live(
+                    source=FakeSource(),
+                    runtime=ScriptRuntime(["TROT"] * 1000),
+                    application=create_application_runtime("gesture_commander"),
+                    seam=seam,
+                    prompt="p",
+                    gate=MotionGate(confirmations=1),
+                    period_s=0.01,
+                    watchdog_s=1.0,
+                    emit=lambda r: None,
+                )
+            )
+            while "trot" not in seam.sent:
+                await asyncio.sleep(0.005)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            return seam
+
+        seam = asyncio.run(scenario())
+        self.assertEqual(seam.sent[-1], "stop")
 
     def test_error_ticks_are_paced_not_hot_looped(self):
         # a persistent inference failure must still honor --period-seconds, not spin

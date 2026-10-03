@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 from pave_runtime.inference import Observation
+from pave_runtime.shutdown import StopUnconfirmed
 from scripts.run_inference import parse_args, run_once, summarize_outcome
 
 
@@ -126,6 +127,60 @@ class SeamDispatchTests(unittest.TestCase):
                     )
         # the finally must still have issued STOP after the failed hold (F2 guarantee)
         self.assertEqual(_actions(fake), ["trot", "stop"])
+
+    def _run_cancelled_lease(self, fake, *, cancel_in: str):
+        """Run a TROT lease and cancel it (what SIGTERM/SIGHUP do) during the send or the hold."""
+        factory = _Factory(fake)
+
+        async def cancelled_sleep(_):
+            raise asyncio.CancelledError()
+
+        patches = [mock.patch("pave_runtime.seam.create_seam_transport", factory)]
+        if cancel_in == "hold":
+            patches.append(mock.patch("scripts.run_inference.asyncio.sleep", cancelled_sleep))
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            with contextlib.redirect_stdout(io.StringIO()):
+                return asyncio.run(
+                    run_once(
+                        **{
+                            **BASE,
+                            "mock_output": "TROT",
+                            "seam_transport": "raw_zenoh",
+                            "allow_motion": True,
+                            "motion_hold_seconds": 5.0,
+                        }
+                    )
+                )
+
+    def test_cancel_during_the_hold_still_stops_and_reraises(self):
+        fake = FakeSeamTransport()
+        with self.assertRaises(asyncio.CancelledError):
+            self._run_cancelled_lease(fake, cancel_in="hold")
+        self.assertEqual(_actions(fake), ["trot", "stop"])
+
+    def test_cancel_during_the_motion_send_still_stops(self):
+        # a signal arriving mid-send may already have started the body: the lease must cover the send
+        class CancelOnTrot(FakeSeamTransport):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                state = await super().send(action, params, target=target, timeout=timeout)
+                if action == "trot":
+                    raise asyncio.CancelledError()
+                return state
+
+        fake = CancelOnTrot()
+        with self.assertRaises(asyncio.CancelledError):
+            self._run_cancelled_lease(fake, cancel_in="send")
+        self.assertEqual(_actions(fake), ["trot", "stop"])
+
+    def test_cancelled_lease_with_unconfirmed_stop_is_safety_critical(self):
+        fake = FakeSeamTransport(
+            state_by_action={"stop": {"status": "failed", "action": "stop", "error": "bridge down"}}
+        )
+        with self.assertRaises(StopUnconfirmed) as ctx:
+            self._run_cancelled_lease(fake, cancel_in="hold")
+        self.assertEqual(ctx.exception.state["status"], "failed")
 
     def test_body_failure_state_is_forwarded(self):
         fake = FakeSeamTransport(

@@ -31,6 +31,12 @@ from pave_runtime.observation import (  # noqa: E402
     create_observation_source,
 )
 from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
+from pave_runtime.shutdown import (  # noqa: E402
+    STOP_UNCONFIRMED_EXIT,
+    ShutdownRequested,
+    StopUnconfirmed,
+    run_with_graceful_shutdown,
+)
 
 
 DEFAULT_PROMPT_PRESET = ROOT / "prompts" / "robot-commander-gesture.json"
@@ -150,29 +156,38 @@ async def run_once(
             from pave_runtime.seam import create_seam_transport
 
             seam = create_seam_transport(seam_transport)
-            state = await seam.send(action, params, target=action_target)
             dispatch_result = {
                 "status": "sent_over_seam",
                 "transport": seam_transport,
                 "target": action_target,
                 "action": action,
                 "params": params,
-                "state": state,
+                "state": None,
             }
             if action in MOTION_ACTIONS:
                 # F2 motion lease: hold the motion for a bounded window, then ALWAYS auto-STOP —
-                # including on Ctrl+C or an error during the hold — so the body is never left
-                # marking time after this single-shot command exits. The STOP targets the SAME body.
+                # on Ctrl+C, SIGTERM or SIGHUP (an SSH drop), or an error — so the body is never left
+                # marking time after this single-shot command exits. The lease covers the motion
+                # send itself (a signal mid-send may already have started the body), and the STOP
+                # targets the SAME body.
                 hold = max(0.0, motion_hold_seconds)
-                auto_stop_state = None
+                interrupted = False
                 try:
+                    dispatch_result["state"] = await seam.send(action, params, target=action_target)
                     await asyncio.sleep(hold)
+                except asyncio.CancelledError:
+                    interrupted = True
+                    raise
                 finally:
                     auto_stop_state = await seam.send("stop", {}, target=action_target)
+                    if interrupted and (auto_stop_state or {}).get("status") != "completed":
+                        raise StopUnconfirmed(auto_stop_state)  # safety-critical: exit 5
                 dispatch_result["motion_lease"] = {
                     "hold_seconds": hold,
                     "auto_stop": auto_stop_state,
                 }
+            else:
+                dispatch_result["state"] = await seam.send(action, params, target=action_target)
     elif should_dispatch:
         if adapter_name.strip().lower() not in MOCK_ADAPTER_NAMES:
             raise ValueError(
@@ -290,7 +305,14 @@ def main() -> int:
                 motion_hold_seconds=args.motion_hold_seconds,
             )
 
-        payload = asyncio.run(execute())
+        # SIGINT, SIGTERM and SIGHUP all cancel the run so an in-flight motion lease still STOPs the body
+        payload = run_with_graceful_shutdown(execute())
+    except ShutdownRequested as exc:
+        print(json.dumps({"status": "interrupted", "signal": exc.signal_name}), file=sys.stderr)
+        return exc.exit_code
+    except StopUnconfirmed as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
+        return STOP_UNCONFIRMED_EXIT
     except (
         OSError,
         ValueError,
