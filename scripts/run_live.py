@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -35,6 +36,7 @@ from pave_runtime.inference import (  # noqa: E402
     InferenceRuntimeError,
     create_inference_runtime,
 )
+from pave_runtime.lease import LEASED_ACTIONS as MOTION_ACTIONS  # noqa: E402
 from pave_runtime.observation import ObservationSourceError, create_observation_source  # noqa: E402
 from pave_runtime.seam import create_seam_transport  # noqa: E402
 from pave_runtime.shutdown import (  # noqa: E402
@@ -45,7 +47,6 @@ from pave_runtime.shutdown import (  # noqa: E402
 )
 from scripts.run_inference import DEFAULT_PROMPT_PRESET, load_prompt  # noqa: E402
 
-MOTION_ACTIONS = frozenset({"trot", "move"})
 IMMEDIATE_ACTIONS = frozenset({"stop", "estop", "home"})
 
 
@@ -105,11 +106,39 @@ async def run_live(
     watchdog_s: float = 4.0,
     max_ticks: int | None = None,
     max_seconds: float | None = None,
+    lease_renew_s: float = 2.0,
     emit: Callable[[dict], None] = lambda record: None,
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
     start = clock()
     ticks = 0
+    # The BODY keeps a dead-man lease on every motion (BODY_MOTION_TTL_S, default 5 s) and STOPs itself
+    # if the brain stops renewing — covering a crash, `kill -9` or a network drop that no cleanup here
+    # could. A renewer task re-sends the active motion on its own cadence, so the lease measures the
+    # brain's LIVENESS, not how long one inference happens to take.
+    send_lock = asyncio.Lock()       # one seam send at a time: a renewal must never land after a STOP
+    active: dict[str, Any] = {}      # the leased motion the body is running, if any
+    stop_renewer = asyncio.Event()
+    renewer: "asyncio.Future | None" = None
+
+    async def renew_loop() -> None:
+        while True:
+            try:
+                await asyncio.wait_for(stop_renewer.wait(), timeout=lease_renew_s)
+                return  # told to stop
+            except asyncio.TimeoutError:
+                pass
+            async with send_lock:
+                if not active or gate.current not in MOTION_ACTIONS:
+                    continue  # the loop already decided to stop (or never started a motion)
+                try:
+                    renew_state = await seam.send(active["action"], active["params"], target=target)
+                except Exception as exc:  # the body will STOP itself when the lease runs out
+                    emit({"event": "renew_error", "error": str(exc)})
+                    continue
+                if (renew_state or {}).get("status") != "completed":
+                    emit({"event": "renew_failed", "state": renew_state})
+
     try:
         while True:
             if max_ticks is not None and ticks >= max_ticks:
@@ -127,8 +156,10 @@ async def run_live(
             except (asyncio.TimeoutError, ObservationSourceError, InferenceRuntimeError) as exc:
                 # observe/infer stalled or failed — if a motion is active, fail-safe STOP
                 stopped = gate.force_stop()
+                active.clear()
                 if stopped:
-                    await seam.send("stop", {}, target=target)
+                    async with send_lock:
+                        await seam.send("stop", {}, target=target)
                 emit({"tick": ticks, "event": "watchdog", "error": str(exc),
                       "dispatched": "stop" if stopped else None})
             else:
@@ -141,7 +172,15 @@ async def run_live(
                 to_dispatch = gate.admit(action, now_ms)
                 state = None
                 if to_dispatch is not None:
-                    state = await seam.send(to_dispatch, normalized["params"], target=target)
+                    async with send_lock:
+                        state = await seam.send(to_dispatch, normalized["params"], target=target)
+                        active.clear()
+                        # renew only a motion the body actually accepted; a failed one is left to the
+                        # body's lease, which STOPs it rather than keeping a half-started gait alive
+                        if to_dispatch in MOTION_ACTIONS and (state or {}).get("status") == "completed":
+                            active.update(action=to_dispatch, params=normalized["params"])
+                    if active and renewer is None:
+                        renewer = asyncio.ensure_future(renew_loop())
                 emit({
                     "tick": ticks,
                     "decided": action,
@@ -156,6 +195,13 @@ async def run_live(
             if period_s and elapsed < period_s:
                 await asyncio.sleep(period_s - elapsed)
     finally:
+        # stop renewing first, so no renewal can land after the final STOP
+        stop_renewer.set()
+        if renewer is not None:
+            renewer.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await renewer
+        active.clear()
         # always leave the body stopped — and say so loudly if that STOP could not be confirmed
         if gate.force_stop():
             try:
@@ -185,6 +231,9 @@ def parse_args() -> argparse.Namespace:
                         help="window for those confirmations (default: env TROT_CONFIRMATION_WINDOW_MS or 1500)")
     parser.add_argument("--motion-watchdog-ms", type=float, default=4000.0,
                         help="auto-STOP if observe+infer stalls longer than this while moving")
+    parser.add_argument("--lease-renew-seconds", type=float, default=2.0,
+                        help="re-send the active motion this often to renew the body's dead-man lease; must be "
+                        "comfortably below the body's BODY_MOTION_TTL_S (default 5 s)")
     parser.add_argument("--max-ticks", type=int, default=None)
     parser.add_argument("--max-seconds", type=float, default=None)
     return parser.parse_args()
@@ -240,6 +289,7 @@ def main() -> int:
                 watchdog_s=args.motion_watchdog_ms / 1000.0,
                 max_ticks=args.max_ticks,
                 max_seconds=args.max_seconds,
+                lease_renew_s=args.lease_renew_seconds,
                 emit=emit,
             )
         )

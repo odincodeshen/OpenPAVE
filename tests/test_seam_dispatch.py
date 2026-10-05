@@ -182,6 +182,41 @@ class SeamDispatchTests(unittest.TestCase):
             self._run_cancelled_lease(fake, cancel_in="hold")
         self.assertEqual(ctx.exception.state["status"], "failed")
 
+    def test_a_hold_longer_than_the_lease_renews_the_motion(self):
+        # the body STOPs itself unless the motion is renewed, so a long hold must keep re-sending it
+        fake = FakeSeamTransport()
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=0.25, lease_renew_seconds=0.05
+        )
+        self.assertGreaterEqual(_actions(fake).count("trot"), 4)  # the command plus several renewals
+        self.assertEqual(_actions(fake)[-1], "stop")
+        self.assertEqual(payload["dispatch"]["motion_lease"]["renewals"], _actions(fake).count("trot") - 1)
+        self.assertEqual(payload["outcome"]["exit_code"], 0)
+
+    def test_a_short_hold_needs_no_renewal(self):
+        fake = FakeSeamTransport()
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=0.0, lease_renew_seconds=2.0
+        )
+        self.assertEqual(_actions(fake), ["trot", "stop"])
+        self.assertEqual(payload["dispatch"]["motion_lease"]["renewals"], 0)
+
+    def test_a_lost_renewal_ends_the_hold_early_and_still_stops(self):
+        class SecondTrotLost(FakeSeamTransport):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                state = await super().send(action, params, target=target, timeout=timeout)
+                if action == "trot" and _actions(self).count("trot") > 1:
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return state
+
+        fake = SecondTrotLost()
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=5.0, lease_renew_seconds=0.05
+        )
+        self.assertEqual(_actions(fake), ["trot", "trot", "stop"])  # gave up the hold, did not wait 5 s
+        lease = payload["dispatch"]["motion_lease"]
+        self.assertEqual(lease["renew_failed"]["status"], "no_reply")
+
     def test_body_failure_state_is_forwarded(self):
         fake = FakeSeamTransport(
             state_by_action={

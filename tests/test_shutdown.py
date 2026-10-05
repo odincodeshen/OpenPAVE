@@ -92,6 +92,42 @@ RUN_INFERENCE_MAIN_CHILD = FAKES + textwrap.dedent(
     """
 )
 
+# The body process: the REAL seam_cli.cli() entrypoint serving a mock adapter over a fake transport.
+SEAM_CLI_BODY_CHILD = textwrap.dedent(
+    """
+    import asyncio, sys
+    import scripts.seam_cli as sc
+
+    class FakeServe:
+        async def serve(self, adapter):
+            print("serving", flush=True)
+            await asyncio.sleep(30)
+
+    sc.create_seam_transport = lambda *a, **k: FakeServe()
+    sys.argv = ["seam_cli.py", "serve"]
+    sys.exit(sc.cli())
+    """
+)
+
+SEAM_CLI_STOP_FAILS_CHILD = SEAM_CLI_BODY_CHILD.replace(
+    "sys.argv = [",
+    "from pave_runtime.shutdown import StopUnconfirmed\n"
+    "def boom(adapter):\n"
+    "    raise StopUnconfirmed({'status': 'failed'})\n"
+    "sc.safe_stop = boom\n"
+    "sys.argv = [",
+)
+
+SEAM_CLI_USAGE_CHILD = textwrap.dedent(
+    """
+    import sys
+    import scripts.seam_cli as sc
+    sc.create_seam_transport = lambda *a, **k: object()
+    sys.argv = ["seam_cli.py", "send"]
+    sys.exit(sc.cli())
+    """
+)
+
 # The child: a driver whose STOP takes time, to prove a second signal cannot interrupt it.
 SLOW_STOP_CHILD = textwrap.dedent(
     """
@@ -195,6 +231,41 @@ class SignalStopTests(unittest.TestCase):
                 sends, code = self._signal_main(RUN_INFERENCE_MAIN_CHILD, sig)
                 self.assertEqual(sends, ["SEND trot", "SEND stop"])
                 self.assertEqual(code, 128 + sig)
+
+    def test_body_process_makes_its_actuator_safe_when_it_is_shut_down(self):
+        # the body process itself being kill-ed / hung up must leave the actuator stopped
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            with self.subTest(signal=sig.name):
+                proc = _spawn(SEAM_CLI_BODY_CHILD, {"ROBOT_ADAPTER": "mock"})
+                try:
+                    _wait_for(proc, "serving")
+                    proc.send_signal(sig)
+                    out, _ = proc.communicate(timeout=10)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                self.assertIn("MOCK ACTION=STOP", out)  # the adapter was told to stop
+                self.assertIn("adapter mock stopped", out)
+                self.assertEqual(proc.returncode, 128 + sig)
+
+    def test_body_shutdown_with_an_unconfirmed_stop_exits_safety_critical(self):
+        proc = _spawn(SEAM_CLI_STOP_FAILS_CHILD, {"ROBOT_ADAPTER": "mock"})
+        try:
+            _wait_for(proc, "serving")
+            proc.send_signal(signal.SIGTERM)
+            _, err = proc.communicate(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        self.assertEqual(proc.returncode, 5)
+        self.assertIn("safety-critical", err)
+
+    def test_seam_cli_usage_error_still_exits_one(self):
+        # sys.exit inside the coroutine must survive the graceful-shutdown runner
+        proc = _spawn(SEAM_CLI_USAGE_CHILD)
+        _, err = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("usage", err)
 
     def test_a_second_signal_cannot_interrupt_the_stop(self):
         proc = _spawn(SLOW_STOP_CHILD)

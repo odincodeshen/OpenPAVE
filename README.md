@@ -253,8 +253,10 @@ real-hardware validated) is the [v1.8 Quick Demo](docs/runbooks/v1.8-quick-demo.
 > (including on `Ctrl+C`); `stop`/`home`/`estop` always pass. The dispatch outcome drives the exit
 > code, and `--action-target` picks which body over `--seam` (`device_connect` rejects an ambiguous
 > multi-body discovery). For **continuous control**, `scripts/run_live.py` confirms motion over
-> several frames (edge-triggered dispatch, stall watchdog, fail-safe STOP). Drive a real body only
-> with an operator watching. See the Safety Status above.
+> several frames (edge-triggered dispatch, stall watchdog, fail-safe STOP). The **body stops its own
+> motion** (dead-man lease, `BODY_MOTION_TTL_S`, default 5 s) if the brain dies or the link drops, and
+> a body process being shut down leaves its actuator stopped. Drive a real body only with an operator
+> watching. See the Safety Status above.
 
 ## Benchmarking
 

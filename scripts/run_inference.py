@@ -30,6 +30,7 @@ from pave_runtime.observation import (  # noqa: E402
     ObservationSourceError,
     create_observation_source,
 )
+from pave_runtime.lease import LEASED_ACTIONS  # noqa: E402
 from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
 from pave_runtime.shutdown import (  # noqa: E402
     STOP_UNCONFIRMED_EXIT,
@@ -41,10 +42,10 @@ from pave_runtime.shutdown import (  # noqa: E402
 
 DEFAULT_PROMPT_PRESET = ROOT / "prompts" / "robot-commander-gesture.json"
 MOCK_ADAPTER_NAMES = frozenset({"mock", "dry-run", "dry_run"})
-# Locomotion verbs that start/continue unattended motion on a real body. Over a single-shot
-# --seam dispatch these are blocked unless the operator opts in with --allow-motion; stop/home/
-# estop are always allowed. See F1/F2 in the v1.8 live-body review.
-MOTION_ACTIONS = frozenset({"trot", "move"})
+# Locomotion verbs that start/continue unattended motion on a real body (the same set the body leases).
+# Over a single-shot --seam dispatch these are blocked unless the operator opts in with --allow-motion;
+# stop/home/estop are always allowed. See F1/F2 in the v1.8 live-body review.
+MOTION_ACTIONS = LEASED_ACTIONS
 
 
 def load_prompt(path: Path) -> tuple[str, str]:
@@ -114,6 +115,7 @@ async def run_once(
     action_target: str | None = None,
     allow_motion: bool = False,
     motion_hold_seconds: float = 3.0,
+    lease_renew_seconds: float = 2.0,
 ) -> dict[str, Any]:
     runtime_opts = {"output": mock_output} if runtime_name == "mock" and mock_output is not None else {}
     runtime = create_inference_runtime(runtime_name, **runtime_opts)
@@ -172,9 +174,23 @@ async def run_once(
                 # targets the SAME body.
                 hold = max(0.0, motion_hold_seconds)
                 interrupted = False
+                renewals = 0
+                renew_failed = None
                 try:
                     dispatch_result["state"] = await seam.send(action, params, target=action_target)
-                    await asyncio.sleep(hold)
+                    # The body STOPs itself unless the lease is renewed (BODY_MOTION_TTL_S, default 5 s), so
+                    # a hold longer than that must renew: re-send the same motion every renew interval.
+                    remaining = hold
+                    while remaining > 0:
+                        step = min(max(lease_renew_seconds, 0.05), remaining)
+                        await asyncio.sleep(step)
+                        remaining -= step
+                        if remaining > 0:
+                            renew_state = await seam.send(action, params, target=action_target)
+                            renewals += 1
+                            if (renew_state or {}).get("status") != "completed":
+                                renew_failed = renew_state  # the body has lost the motion: end the hold
+                                break
                 except asyncio.CancelledError:
                     interrupted = True
                     raise
@@ -184,8 +200,11 @@ async def run_once(
                         raise StopUnconfirmed(auto_stop_state)  # safety-critical: exit 5
                 dispatch_result["motion_lease"] = {
                     "hold_seconds": hold,
+                    "renewals": renewals,
                     "auto_stop": auto_stop_state,
                 }
+                if renew_failed is not None:
+                    dispatch_result["motion_lease"]["renew_failed"] = renew_failed
             else:
                 dispatch_result["state"] = await seam.send(action, params, target=action_target)
     elif should_dispatch:
@@ -272,6 +291,13 @@ def parse_args() -> argparse.Namespace:
         "bounded window and issues an automatic STOP (see --motion-hold-seconds)",
     )
     parser.add_argument(
+        "--lease-renew-seconds",
+        type=float,
+        default=2.0,
+        help="while holding a motion, re-send it this often to renew the body's dead-man lease; must be "
+        "comfortably below the body's BODY_MOTION_TTL_S (default 5 s)",
+    )
+    parser.add_argument(
         "--motion-hold-seconds",
         type=float,
         default=3.0,
@@ -303,6 +329,7 @@ def main() -> int:
                 action_target=args.action_target or os.getenv("ACTION_TARGET"),
                 allow_motion=args.allow_motion,
                 motion_hold_seconds=args.motion_hold_seconds,
+                lease_renew_seconds=args.lease_renew_seconds,
             )
 
         # SIGINT, SIGTERM and SIGHUP all cancel the run so an in-flight motion lease still STOPs the body

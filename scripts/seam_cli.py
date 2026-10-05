@@ -11,7 +11,6 @@ plugin (`pave_runtime.seam`).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -19,7 +18,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root
 
+from pave_runtime.lease import safe_stop
 from pave_runtime.seam import create_seam_transport
+from pave_runtime.shutdown import (
+    STOP_UNCONFIRMED_EXIT,
+    ShutdownRequested,
+    StopUnconfirmed,
+    run_with_graceful_shutdown,
+)
 
 
 async def main() -> None:
@@ -31,7 +37,14 @@ async def main() -> None:
         # brain-side deployment light (no control_daemon required to send).
         from control_daemon.adapters import create_robot_adapter
         adapter = create_robot_adapter(os.getenv("ROBOT_ADAPTER", "mock_arm"))
-        await seam.serve(adapter)
+        try:
+            await seam.serve(adapter)
+        finally:
+            # the body is going away (SIGTERM / SIGHUP / Ctrl+C / error): leave the actuator safe. A
+            # stop that cannot be confirmed raises StopUnconfirmed (exit 5) instead of passing silently.
+            state = safe_stop(adapter)
+            if state is not None:
+                print(f"[seam_cli] shutdown: adapter {adapter.name} stopped ({state.get('status')})", flush=True)
 
     elif mode == "send":
         if len(sys.argv) < 3:
@@ -47,5 +60,16 @@ async def main() -> None:
         sys.exit(1)
 
 
+def cli() -> int:
+    try:
+        run_with_graceful_shutdown(main())
+    except ShutdownRequested as exc:
+        return exc.exit_code
+    except StopUnconfirmed as exc:
+        print(f"[seam_cli] safety-critical: {exc}", file=sys.stderr)
+        return STOP_UNCONFIRMED_EXIT
+    return 0
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(cli())

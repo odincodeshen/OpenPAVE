@@ -10,10 +10,12 @@ Fleet-level features (`broadcast`) are **backend-specific** and deliberately NOT
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import types
 
-from pave_runtime.seam import dispatch
+from pave_runtime.lease import BodyLease, guarded_dispatch
 
 _SAFETY_CRITICAL = frozenset({"estop", "stop"})
 _SENSING = frozenset({"get_image"})
@@ -43,9 +45,11 @@ class DeviceConnectSeam:
         cat = _CATEGORY.get(adapter.name, "actuator")
         dtype = os.getenv("DEVICE_TYPE", self.device_type)
 
+        lease = BodyLease()  # dead-man switch: a leased motion the brain stops renewing is STOPped here
+
         def _make_rpc(action: str):
             async def method(self, params: dict | None = None) -> dict:
-                return dispatch(adapter, action, params)
+                return guarded_dispatch(adapter, lease, action, params)
             method.__name__ = action
             method.__doc__ = f"Run the '{action}' capability.\n\nArgs:\n    params: capability params dict."
             return rpc(name=action, labels=_function_labels(action))(method)
@@ -76,8 +80,14 @@ class DeviceConnectSeam:
         driver = _OpenPaveDriver()
         device_id = os.getenv("DEVICE_ID", f"openpave-{adapter.name}-d2d")
         print(f"[seam:device_connect] body up · adapter={adapter.name} · "
-              f"caps={sorted(adapter.capabilities)}")
-        await DeviceRuntime(driver=driver, device_id=device_id).run()
+              f"caps={sorted(adapter.capabilities)} · motion lease {lease.ttl_s:g}s")
+        watcher = asyncio.ensure_future(
+            lease.watch(adapter, emit=lambda e: print("[seam:lease]", json.dumps(e, ensure_ascii=False), flush=True))
+        )
+        try:
+            await DeviceRuntime(driver=driver, device_id=device_id).run()
+        finally:
+            watcher.cancel()
 
     async def send(self, action: str, params: dict | None = None,
                    *, target: str | None = None, timeout: float = 5.0) -> dict:

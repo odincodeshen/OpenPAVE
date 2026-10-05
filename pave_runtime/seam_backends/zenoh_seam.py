@@ -15,7 +15,7 @@ import time
 
 import zenoh  # lazy: only imported when the raw_zenoh backend is selected
 
-from pave_runtime.seam import dispatch
+from pave_runtime.lease import BodyLease, guarded_dispatch
 
 ACTION_KEY = "openpave/action"        # down: {action, params}
 STATE_KEY = "openpave/action_state"   # up: state dict
@@ -43,33 +43,41 @@ class ZenohSeam:
     async def serve(self, adapter) -> None:
         session = zenoh.open(_config())
         pub = session.declare_publisher(STATE_KEY)
+        lease = BodyLease()  # dead-man switch: a leased motion the brain stops renewing is STOPped here
 
         def on_action(sample) -> None:
             try:
                 p = json.loads(_payload_bytes(sample))
             except json.JSONDecodeError:
                 return
-            state = dispatch(adapter, p.get("action", ""), p.get("params"))
+            state = guarded_dispatch(adapter, lease, p.get("action", ""), p.get("params"))
             pub.put(json.dumps(state, ensure_ascii=False).encode("utf-8"))
 
         session.declare_subscriber(ACTION_KEY, on_action)
-        print(f"[seam:raw_zenoh] body up · adapter={adapter.name} · caps={sorted(adapter.capabilities)}")
+        watcher = asyncio.ensure_future(
+            lease.watch(adapter, emit=lambda e: print("[seam:lease]", json.dumps(e, ensure_ascii=False), flush=True))
+        )
+        print(f"[seam:raw_zenoh] body up · adapter={adapter.name} · caps={sorted(adapter.capabilities)}"
+              f" · motion lease {lease.ttl_s:g}s")
         try:
             while True:
                 await asyncio.sleep(1)
         finally:
+            watcher.cancel()
             session.close()
 
     async def send(self, action: str, params: dict | None = None,
                    *, target: str | None = None, timeout: float = 5.0) -> dict:
         session = zenoh.open(_config())
-        replies: list[dict] = []
-        session.declare_subscriber(STATE_KEY, lambda s: replies.append(json.loads(_payload_bytes(s))))
-        pub = session.declare_publisher(ACTION_KEY)
-        await asyncio.sleep(0.5)  # let discovery + subscription match
-        pub.put(json.dumps({"action": action, "params": params or {}}).encode("utf-8"))
-        deadline = time.time() + timeout
-        while time.time() < deadline and not replies:
-            await asyncio.sleep(0.05)
-        session.close()
+        try:
+            replies: list[dict] = []
+            session.declare_subscriber(STATE_KEY, lambda s: replies.append(json.loads(_payload_bytes(s))))
+            pub = session.declare_publisher(ACTION_KEY)
+            await asyncio.sleep(0.5)  # let discovery + subscription match
+            pub.put(json.dumps({"action": action, "params": params or {}}).encode("utf-8"))
+            deadline = time.time() + timeout
+            while time.time() < deadline and not replies:
+                await asyncio.sleep(0.05)
+        finally:
+            session.close()  # also when cancelled mid-send (a shutdown signal), not only on the happy path
         return replies[-1] if replies else {"status": "no_reply", "error": "timeout", "action": action}
