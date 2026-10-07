@@ -43,6 +43,7 @@ from pave_runtime.shutdown import (  # noqa: E402
     STOP_UNCONFIRMED_EXIT,
     ShutdownRequested,
     StopUnconfirmed,
+    bounded,
     run_with_graceful_shutdown,
 )
 from scripts.run_inference import DEFAULT_PROMPT_PRESET, load_prompt  # noqa: E402
@@ -120,22 +121,45 @@ async def run_live(
     active: dict[str, Any] = {}      # the leased motion the body is running, if any
     stop_renewer = asyncio.Event()
     renewer: "asyncio.Future | None" = None
+    renewal_send: dict[str, "asyncio.Future"] = {}  # the renewal send in flight, if any
+
+    def preempt_renewal() -> None:
+        """A STOP (or any new action) supersedes a renewal still waiting on the network.
+
+        The renewal send holds ``send_lock`` until it returns, and a send to a dead link can take its full
+        timeout. Without this, a STOP decided meanwhile would wait that long to leave the brain.
+        """
+        pending = renewal_send.get("task")
+        if pending is not None and not pending.done():
+            pending.cancel()
 
     async def renew_loop() -> None:
         while True:
             try:
-                await asyncio.wait_for(stop_renewer.wait(), timeout=lease_renew_s)
+                await bounded(stop_renewer.wait(), lease_renew_s)
                 return  # told to stop
             except asyncio.TimeoutError:
                 pass
             async with send_lock:
                 if not active or gate.current not in MOTION_ACTIONS:
                     continue  # the loop already decided to stop (or never started a motion)
+                send_task = asyncio.ensure_future(
+                    seam.send(active["action"], active["params"], target=target)
+                )
+                renewal_send["task"] = send_task
                 try:
-                    renew_state = await seam.send(active["action"], active["params"], target=target)
-                except Exception as exc:  # the body will STOP itself when the lease runs out
-                    emit({"event": "renew_error", "error": str(exc)})
+                    await asyncio.wait({send_task})  # cancelling the renewer cancels this wait
+                except asyncio.CancelledError:
+                    send_task.cancel()
+                    raise
+                finally:
+                    renewal_send.pop("task", None)
+                if send_task.cancelled():
+                    continue  # preempted: the STOP / new action that took its place is already on its way
+                if send_task.exception() is not None:  # the body will STOP itself when the lease runs out
+                    emit({"event": "renew_error", "error": str(send_task.exception())})
                     continue
+                renew_state = send_task.result()
                 if (renew_state or {}).get("status") != "completed":
                     emit({"event": "renew_failed", "state": renew_state})
 
@@ -148,16 +172,17 @@ async def run_live(
             tick_start = clock()
             now_ms = tick_start * 1000.0
             try:
-                observation = await asyncio.wait_for(source.capture(), timeout=watchdog_s)
-                result = await asyncio.wait_for(
+                observation = await bounded(source.capture(), watchdog_s)
+                result = await bounded(
                     runtime.infer(InferenceRequest(observation=observation, prompt=prompt)),
-                    timeout=watchdog_s,
+                    watchdog_s,
                 )
             except (asyncio.TimeoutError, ObservationSourceError, InferenceRuntimeError) as exc:
                 # observe/infer stalled or failed — if a motion is active, fail-safe STOP
                 stopped = gate.force_stop()
                 active.clear()
                 if stopped:
+                    preempt_renewal()
                     async with send_lock:
                         await seam.send("stop", {}, target=target)
                 emit({"tick": ticks, "event": "watchdog", "error": str(exc),
@@ -172,6 +197,7 @@ async def run_live(
                 to_dispatch = gate.admit(action, now_ms)
                 state = None
                 if to_dispatch is not None:
+                    preempt_renewal()
                     async with send_lock:
                         state = await seam.send(to_dispatch, normalized["params"], target=target)
                         active.clear()

@@ -199,6 +199,57 @@ class LiveLoopTests(unittest.TestCase):
         stop_at = seam.sent.index("stop")
         self.assertNotIn("trot", seam.sent[stop_at:])  # nothing delivered after the STOP
 
+    def test_a_stop_is_not_held_up_by_a_renewal_hanging_on_the_network(self):
+        # The renewal send holds the send lock until it returns; a send to a dead link can take its whole
+        # timeout. A STOP decided meanwhile must preempt it, not queue behind it.
+        class HangingRenewal(FakeSeam):
+            def __init__(self):
+                super().__init__()
+                self.trots = 0
+                self.at = {}
+
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                import time as _t
+                if action == "trot":
+                    self.trots += 1
+                    if self.trots > 1:
+                        await asyncio.sleep(3.0)  # every renewal hangs like a send to a dead link
+                self.sent.append(action)
+                self.at.setdefault(action, _t.monotonic())
+                return {"status": "completed", "action": action}
+
+        import time as _time
+        seam = HangingRenewal()
+        decided = {}
+
+        class Rt(ScriptRuntime):
+            async def infer(self, request):
+                res = await super().infer(request)
+                if res.text == "STOP" and "t" not in decided:
+                    decided["t"] = _time.monotonic()
+                return res
+
+        asyncio.run(
+            run_live(
+                source=FakeSource(),
+                runtime=Rt(["TROT", "TROT", "TROT", "STOP", "STOP", "STOP", "STOP"]),
+                application=create_application_runtime("gesture_commander"),
+                seam=seam,
+                prompt="p",
+                gate=MotionGate(confirmations=1),
+                period_s=0.3,
+                watchdog_s=2.0,
+                lease_renew_s=0.2,
+                max_ticks=7,
+                emit=lambda r: None,
+            )
+        )
+        delay = seam.at["stop"] - decided["t"]
+        self.assertLess(delay, 0.5, f"the STOP waited {delay:.2f}s behind a hanging renewal")
+        # and the preempted renewal was never delivered after the STOP
+        self.assertEqual(seam.sent.count("trot"), 1)
+        self.assertNotIn("trot", seam.sent[seam.sent.index("stop"):])
+
     def test_a_failed_motion_is_not_renewed(self):
         # a half-started gait must be left to the body's lease, not kept alive by renewals
         class TrotFails(FakeSeam):
