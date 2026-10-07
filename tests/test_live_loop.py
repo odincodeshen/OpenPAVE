@@ -101,6 +101,81 @@ class MotionGateTests(unittest.TestCase):
         self.assertFalse(g.force_stop())                 # already stopped
 
 
+class MotionGateRetryTests(unittest.TestCase):
+    def test_undelivered_motion_is_offered_again_on_the_next_frame(self):
+        g = MotionGate(confirmations=1, window_ms=1000, max_retries=3)
+        self.assertEqual(g.admit("trot", 0), "trot")
+        self.assertTrue(g.undelivered("trot"))
+        self.assertEqual(g.admit("trot", 100), "trot")  # offered again
+        g.delivered("trot")
+        self.assertIsNone(g.admit("trot", 200))  # edge-triggered again
+
+    def test_a_retry_after_the_confirmation_window_must_reconfirm(self):
+        g = MotionGate(confirmations=2, window_ms=500, max_retries=3)
+        g.admit("trot", 0)
+        self.assertEqual(g.admit("trot", 100), "trot")
+        g.undelivered("trot")
+        self.assertIsNone(g.admit("trot", 5000))  # window blown: back to one sighting
+        self.assertEqual(g.admit("trot", 5100), "trot")
+
+    def test_motion_retries_are_bounded(self):
+        g = MotionGate(confirmations=1, max_retries=2)
+        results = []
+        for t in range(5):
+            if g.admit("trot", t * 10):
+                results.append(g.undelivered("trot"))
+        self.assertEqual(results, [True, True, False])  # two retries, then abandoned
+        self.assertIsNone(g.admit("trot", 1000))  # abandoned: no more attempts for this episode
+
+    def test_stop_retries_are_unbounded(self):
+        g = MotionGate(confirmations=1, max_retries=1)
+        g.admit("trot", 0)
+        g.delivered("trot")
+        outcomes = []
+        for t in range(10):
+            if g.admit("stop", 100 + t):
+                outcomes.append(g.undelivered("stop"))
+        self.assertEqual(outcomes, [True] * 10)
+
+    def test_uncertain_motion_keeps_a_stop_owed(self):
+        g = MotionGate(confirmations=1, max_retries=3)
+        g.admit("trot", 0)
+        self.assertTrue(g.undelivered("trot"))  # rolled back so it is retried...
+        self.assertNotIn(g.current, ("trot", "move"))
+        self.assertTrue(g.uncertain)  # ...but the body may be moving
+        self.assertTrue(g.force_stop())  # so a STOP is still owed
+        self.assertFalse(g.force_stop())  # and only once
+
+    def test_an_abandoned_motion_still_owes_a_stop(self):
+        g = MotionGate(confirmations=1, max_retries=0)
+        g.admit("trot", 0)
+        self.assertFalse(g.undelivered("trot"))  # out of retries: abandoned, `current` stays advanced
+        self.assertEqual(g.current, "trot")
+        self.assertTrue(g.force_stop())
+
+    def test_a_stop_decision_is_resent_while_the_body_state_is_uncertain(self):
+        g = MotionGate(confirmations=1, max_retries=3)
+        g.admit("trot", 0)
+        g.undelivered("trot")
+        self.assertEqual(g.admit("stop", 10), "stop")  # decided STOP, but the body may be moving: send it
+        g.delivered("stop")
+        self.assertIsNone(g.admit("stop", 20))  # now known: edge-triggered again
+
+    def test_stop_failed_after_a_watchdog_keeps_the_stop_owed(self):
+        g = MotionGate(confirmations=1)
+        g.admit("trot", 0)
+        g.delivered("trot")
+        self.assertTrue(g.force_stop())
+        g.stop_failed()
+        self.assertTrue(g.force_stop())  # still owed on the next failing tick / at shutdown
+
+    def test_refusal_reported_as_delivered_clears_uncertainty(self):
+        g = MotionGate(confirmations=1)
+        g.admit("trot", 0)
+        g.delivered("trot")
+        self.assertFalse(g.uncertain)
+
+
 class LiveLoopTests(unittest.TestCase):
     def test_trot_after_confirmation_then_stop(self):
         seam, _ = _drive(["TROT", "TROT", "STOP"])
@@ -250,16 +325,136 @@ class LiveLoopTests(unittest.TestCase):
         self.assertEqual(seam.sent.count("trot"), 1)
         self.assertNotIn("trot", seam.sent[seam.sent.index("stop"):])
 
-    def test_a_failed_motion_is_not_renewed(self):
-        # a half-started gait must be left to the body's lease, not kept alive by renewals
+    def test_a_failed_motion_is_retried_a_bounded_number_of_times_never_renewed(self):
+        # A failed start is re-sent (up to --dispatch-retries) as a fresh command, then abandoned; it is never
+        # "renewed" — a half-started gait is left to the body's lease rather than kept alive.
         class TrotFails(FakeSeam):
             async def send(self, action, params=None, *, target=None, timeout=5.0):
                 self.sent.append(action)
                 status = "failed" if action == "trot" else "completed"
                 return {"status": status, "action": action}
 
-        seam = self._run_renewing(["TROT"] * 8, seam=TrotFails())
-        self.assertEqual(seam.sent.count("trot"), 1)
+        seam = self._run_renewing(["TROT"] * 10, seam=TrotFails(), period_s=0.03, renew_s=0.01)
+        self.assertEqual(seam.sent.count("trot"), 1 + 3)  # the first attempt + 3 retries, then it stops trying
+        self.assertEqual(seam.sent[-1], "stop")  # and the shutdown STOP is still owed and sent
+
+    # --- failed deliveries are retried (the gate used to mark an action "sent" before it was) --------
+
+    def _run_gate(self, outputs, seam, *, retries=3, ticks=None, confirmations=1):
+        records = []
+        asyncio.run(
+            run_live(
+                source=FakeSource(),
+                runtime=ScriptRuntime(outputs),
+                application=create_application_runtime("gesture_commander"),
+                seam=seam,
+                prompt="p",
+                gate=MotionGate(confirmations=confirmations, max_retries=retries),
+                period_s=0.02,
+                watchdog_s=1.0,
+                lease_renew_s=0.01,
+                max_ticks=ticks if ticks is not None else len(outputs),
+                emit=records.append,
+            )
+        )
+        return records
+
+    def test_a_motion_whose_reply_was_lost_is_retried_until_delivered(self):
+        class LoseFirstTwo(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "trot" and self.sent.count("trot") <= 2:
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return {"status": "completed", "action": action}
+
+        seam = LoseFirstTwo()
+        records = self._run_gate(["TROT"] * 8, seam)
+        self.assertGreaterEqual(seam.sent.count("trot"), 3)  # attempts 1,2 lost; 3 delivered
+        deliveries = [r["delivery"] for r in records if r.get("dispatched") == "trot"]
+        self.assertEqual(deliveries[:3], ["retry", "retry", "delivered"])
+        self.assertNotIn("abandoned", deliveries)
+
+    def test_after_a_retry_succeeds_the_loop_is_edge_triggered_again(self):
+        class LoseFirst(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "trot" and self.sent.count("trot") == 1:
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return {"status": "completed", "action": action}
+
+        records = self._run_gate(["TROT"] * 10, LoseFirst())
+        dispatches = [r for r in records if r.get("dispatched") == "trot"]
+        self.assertEqual([d["delivery"] for d in dispatches], ["retry", "delivered"])  # exactly two commands
+
+    def test_a_stop_that_was_not_delivered_is_retried_every_tick_until_it_is(self):
+        class StopLostTwice(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "stop" and self.sent.count("stop") <= 2:
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return {"status": "completed", "action": action}
+
+        seam = StopLostTwice()
+        records = self._run_gate(["TROT", "STOP", "STOP", "STOP", "STOP", "STOP"], seam)
+        stops = [r for r in records if r.get("dispatched") == "stop" and "tick" in r]
+        self.assertEqual([r["delivery"] for r in stops], ["retry", "retry", "delivered"])
+
+    def test_a_transport_exception_does_not_kill_the_loop_and_is_retried(self):
+        class Flaky(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "trot" and self.sent.count("trot") == 1:
+                    raise RuntimeError("zenoh session failed")
+                return {"status": "completed", "action": action}
+
+        seam = Flaky()
+        records = self._run_gate(["TROT"] * 6, seam)  # must not raise
+        first = next(r for r in records if r.get("dispatched") == "trot")
+        self.assertEqual(first["delivery"], "retry")
+        self.assertEqual(first["state"]["status"], "error")
+        self.assertGreaterEqual(seam.sent.count("trot"), 2)
+
+    def test_a_definitive_refusal_is_not_retried(self):
+        class CannotTrot(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                status = "unsupported" if action == "trot" else "completed"
+                return {"status": status, "action": action}
+
+        seam = CannotTrot()
+        records = self._run_gate(["TROT"] * 6, seam)
+        self.assertEqual(seam.sent.count("trot"), 1)  # asked once; retrying cannot change a "no"
+        self.assertEqual(next(r["delivery"] for r in records if r.get("dispatched") == "trot"), "refused")
+
+    def test_a_motion_whose_reply_was_lost_still_gets_a_shutdown_stop(self):
+        # The send may have reached the body even though no reply came back. The gate rolled `current` back,
+        # but the body may be moving — so the final STOP must still be sent.
+        class AlwaysNoReply(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "trot":
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return {"status": "completed", "action": action}
+
+        seam = AlwaysNoReply()
+        self._run_gate(["TROT"] * 2, seam, retries=3, confirmations=1)  # ends mid-retry, `current` rolled back
+        self.assertEqual(seam.sent[-1], "stop")
+
+    def test_a_watchdog_stop_that_fails_is_retried_and_stays_owed(self):
+        class StopFailsFirst(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "stop" and self.sent.count("stop") == 1:
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return {"status": "completed", "action": action}
+
+        seam = StopFailsFirst()
+        # TROT delivered, then observe/infer stalls twice: the 1st watchdog STOP is lost, the 2nd must go out
+        records = self._run_gate(["TROT", "TROT", STALL, STALL, STALL], seam)
+        watchdogs = [r for r in records if r.get("event") == "watchdog"]
+        self.assertEqual(watchdogs[0]["state"]["status"], "no_reply")
+        self.assertEqual(watchdogs[1]["dispatched"], "stop")  # retried on the next failing tick
+        self.assertGreaterEqual(seam.sent.count("stop"), 2)
 
     def test_a_renewal_that_raises_does_not_kill_the_loop(self):
         class RenewalsFail(FakeSeam):

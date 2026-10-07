@@ -119,6 +119,37 @@ class GuardedDispatchTests(unittest.TestCase):
         self.assertEqual(state["status"], "failed")
         self.assertEqual(lease.active_action(), "trot")
 
+    def test_a_repeat_of_a_failed_motion_runs_again_instead_of_renewing(self):
+        # The brain re-sends a motion whose first attempt failed. The body must run it again, not answer
+        # "completed (renewed)" for a half-started gait that never started cleanly.
+        class FailsOnce(RecordingAdapter):
+            def execute(self, action, params=None):
+                self.calls.append((action, dict(params or {})))
+                if action == "trot" and self.actions().count("trot") == 1:
+                    return AdapterActionResult.failed("trot failed")
+                return AdapterActionResult.ok(detail={"ran": action})
+
+        adapter = FailsOnce()
+        lease, _ = _lease()
+        first = guarded_dispatch(adapter, lease, "trot")
+        self.assertEqual(first["status"], "failed")
+        self.assertEqual(lease.active_action(), "trot")  # still armed: a half-started gait must be STOPped
+        second = guarded_dispatch(adapter, lease, "trot")
+        self.assertEqual(adapter.actions(), ["trot", "trot"])  # it really ran again
+        self.assertNotIn("renewed", second["detail"])
+        self.assertEqual(second["status"], "completed")
+        third = guarded_dispatch(adapter, lease, "trot")  # now healthy: THIS is a renewal
+        self.assertTrue(third["detail"]["renewed"])
+        self.assertEqual(adapter.actions(), ["trot", "trot"])
+
+    def test_a_failed_motion_is_still_stopped_when_its_lease_runs_out(self):
+        adapter = RecordingAdapter(fail={"trot"})
+        lease, clock = _lease()
+        guarded_dispatch(adapter, lease, "trot")
+        clock.advance(5.0)
+        self.assertIsNotNone(lease.expire_if_due(adapter))
+        self.assertEqual(adapter.actions(), ["trot", "stop"])
+
     def test_unsupported_or_rejected_motion_does_not_arm(self):
         adapter = RecordingAdapter()
         adapter.capabilities = frozenset({"stop"})  # cannot trot

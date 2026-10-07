@@ -69,27 +69,34 @@ class BodyLease:
         self._action: str | None = None
         self._params: dict | None = None
         self._deadline = 0.0
+        # whether the armed motion actually started (completed). A motion that FAILED stays armed — a
+        # half-started gait may be moving, so the lease must still STOP it — but it is not healthy, so a
+        # repeat of the same motion must run again instead of being taken for a renewal.
+        self._ok = True
 
     # --- state -------------------------------------------------------------------------------
-    def arm(self, action: str, params: dict | None, ttl_s: float | None = None) -> None:
+    def arm(self, action: str, params: dict | None, ttl_s: float | None = None, ok: bool = True) -> None:
         with self._state_lock:
             self._action = action
             self._params = dict(params or {})
             self._deadline = self._clock() + (ttl_s if ttl_s is not None else self.ttl_s)
+            self._ok = ok
 
     def disarm(self) -> None:
         with self._state_lock:
             self._action = None
             self._params = None
             self._deadline = 0.0
+            self._ok = True
 
     def active_action(self) -> str | None:
         with self._state_lock:
             return self._action
 
     def is_active_same(self, action: str, params: dict | None) -> bool:
+        """True only for a HEALTHY active motion identical to this one — i.e. a genuine renewal."""
         with self._state_lock:
-            return self._action == action and self._params == dict(params or {})
+            return self._ok and self._action == action and self._params == dict(params or {})
 
     def remaining(self) -> float:
         with self._state_lock:
@@ -111,7 +118,7 @@ class BodyLease:
             state = dispatch(adapter, "stop", {})
             if state.get("status") != "completed":
                 # the body may still be moving: keep protecting it and retry the STOP shortly
-                self.arm(action or "", params, ttl_s=RETRY_TTL_S)
+                self.arm(action or "", params, ttl_s=RETRY_TTL_S, ok=False)  # state unknown: a repeat re-runs
             return {"event": "lease_expired", "action": action, "stop": state}
 
     async def watch(self, adapter, poll_s: float = 0.1, emit: Callable[[dict], None] | None = None) -> None:
@@ -142,8 +149,9 @@ def guarded_dispatch(adapter, lease: BodyLease, action: str, params: dict | None
                 }
             state = dispatch(adapter, action, params)
             if state.get("status") in ("completed", "failed"):
-                # arm even on `failed`: a half-started gait may be moving, and the lease will STOP it
-                lease.arm(name, params)
+                # arm even on `failed`: a half-started gait may be moving, and the lease will STOP it. Only a
+                # completed motion is healthy; a repeat of a failed one runs again rather than "renewing" it.
+                lease.arm(name, params, ok=state.get("status") == "completed")
                 state = {**state, "detail": {**(state.get("detail") or {}), "lease_ttl_s": lease.ttl_s}}
             return state
         state = dispatch(adapter, action, params)

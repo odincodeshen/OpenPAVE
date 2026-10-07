@@ -51,21 +51,44 @@ from scripts.run_inference import DEFAULT_PROMPT_PRESET, load_prompt  # noqa: E4
 IMMEDIATE_ACTIONS = frozenset({"stop", "estop", "home"})
 
 
+# A body's definitive "no" — retrying cannot change it, so it is not a failed *delivery*.
+REFUSED_STATUSES = frozenset({"rejected", "unsupported"})
+STOP_ACTIONS = frozenset({"stop", "estop"})
+
+
 class MotionGate:
     """Edge-triggered dispatch with multi-observation confirmation for motion verbs.
 
-    ``admit(action, now_ms)`` returns the action to dispatch this tick, or ``None``.
+    ``admit(action, now_ms)`` returns the action to dispatch this tick, or ``None``. It records the action
+    as sent *before* the send happens, so the caller must report the outcome:
+
+    - ``delivered(action)``  — the body accepted it;
+    - ``undelivered(action)`` — it did not (clearly) reach the body (no reply, transport error, a failed
+      execution): the gate forgets it so the next tick tries again. Immediate verbs (stop / home) retry
+      without limit; a motion verb retries up to ``max_retries`` times per episode, then is abandoned;
+    - a definitive refusal (``rejected`` / ``unsupported``) is reported as ``delivered`` — retrying is futile.
+
+    Without this, one lost packet left the gate convinced the body was already doing it, and an
+    edge-triggered loop never sent it again until the decision changed.
     """
 
-    def __init__(self, confirmations: int = 2, window_ms: float = 1500.0):
+    def __init__(self, confirmations: int = 2, window_ms: float = 1500.0, max_retries: int = 3):
         self.confirmations = max(1, int(confirmations))
         self.window_ms = float(window_ms)
+        self.max_retries = max(0, int(max_retries))
         self.current: str | None = None  # what the body was last told to do
         self.pending: str | None = None  # a motion verb being confirmed
         self.count = 0
         self._first_ms = 0.0
+        # a motion send failed without a clear answer (it may have been delivered and only the reply lost):
+        # the body may be moving even though `current` says otherwise, so a STOP is still owed
+        self.uncertain = False
+        self.retries = 0
+        self._retry_action: str | None = None
+        self._before: str | None = None  # `current` before the dispatch admit() last returned
 
     def admit(self, action: str, now_ms: float) -> str | None:
+        prev = self.current
         if action in MOTION_ACTIONS:
             if self.pending == action and (now_ms - self._first_ms) <= self.window_ms:
                 self.count += 1
@@ -74,24 +97,53 @@ class MotionGate:
                 self.count = 1
                 self._first_ms = now_ms
             if self.count >= self.confirmations and action != self.current:
-                self.current = action
+                self._before, self.current = prev, action
                 return action
             return None
-        # immediate / non-motion verb: clear any motion confirmation, dispatch only on change
+        # immediate / non-motion verb: clear any motion confirmation, dispatch only on change — or, for a
+        # STOP, whenever an earlier motion send left the body's state uncertain
         self.pending = None
         self.count = 0
-        if action != self.current:
-            self.current = action
+        if action != self.current or (action in STOP_ACTIONS and self.uncertain):
+            self._before, self.current = prev, action
             return action
         return None
 
+    def delivered(self, action: str) -> None:
+        """The dispatch admit() returned reached the body and was accepted (or definitively refused)."""
+        self.retries = 0
+        self._retry_action = None
+        self.uncertain = False  # the body's state is known again
+
+    def undelivered(self, action: str) -> bool:
+        """The dispatch did not (clearly) reach the body; forget it so the next tick tries again.
+
+        Returns ``False`` when retrying is abandoned (a motion verb out of retries); ``current`` then stays
+        advanced, but ``uncertain`` keeps a STOP owed at shutdown.
+        """
+        if action in MOTION_ACTIONS:
+            self.uncertain = True  # it may have been delivered and only the reply lost
+            if self._retry_action != action:
+                self.retries, self._retry_action = 0, action
+            if self.retries >= self.max_retries:
+                self.retries, self._retry_action = 0, None
+                return False
+            self.retries += 1
+        self.current = self._before
+        return True
+
     def force_stop(self) -> bool:
-        """Watchdog / shutdown: record that the body is stopped. Returns True if it was moving."""
-        was_moving = self.current in MOTION_ACTIONS
+        """Watchdog / shutdown: record that the body is stopped. Returns True if it was (or may be) moving."""
+        was_moving = self.current in MOTION_ACTIONS or self.uncertain
         self.current = "stop"
         self.pending = None
         self.count = 0
+        self.uncertain = False
         return was_moving
+
+    def stop_failed(self) -> None:
+        """The STOP that force_stop() called for was not confirmed: the body may still be moving."""
+        self.uncertain = True
 
 
 async def run_live(
@@ -181,12 +233,18 @@ async def run_live(
                 # observe/infer stalled or failed — if a motion is active, fail-safe STOP
                 stopped = gate.force_stop()
                 active.clear()
+                stop_state = None
                 if stopped:
                     preempt_renewal()
                     async with send_lock:
-                        await seam.send("stop", {}, target=target)
+                        try:
+                            stop_state = await seam.send("stop", {}, target=target)
+                        except Exception as send_exc:  # a transport error is an undelivered STOP, not a crash
+                            stop_state = {"status": "error", "error": str(send_exc), "action": "stop"}
+                    if (stop_state or {}).get("status") != "completed":
+                        gate.stop_failed()  # still owed: retried on the next failing tick and at shutdown
                 emit({"tick": ticks, "event": "watchdog", "error": str(exc),
-                      "dispatched": "stop" if stopped else None})
+                      "dispatched": "stop" if stopped else None, "state": stop_state})
             else:
                 proposal = application.decide(result)
                 normalized = normalize_action_payload(
@@ -196,15 +254,28 @@ async def run_live(
                 action = normalized["action"]
                 to_dispatch = gate.admit(action, now_ms)
                 state = None
+                delivery = None
                 if to_dispatch is not None:
                     preempt_renewal()
                     async with send_lock:
-                        state = await seam.send(to_dispatch, normalized["params"], target=target)
+                        try:
+                            state = await seam.send(to_dispatch, normalized["params"], target=target)
+                        except Exception as send_exc:  # a transport error is a failed delivery, not a crash
+                            state = {"status": "error", "error": str(send_exc), "action": to_dispatch}
                         active.clear()
-                        # renew only a motion the body actually accepted; a failed one is left to the
-                        # body's lease, which STOPs it rather than keeping a half-started gait alive
-                        if to_dispatch in MOTION_ACTIONS and (state or {}).get("status") == "completed":
-                            active.update(action=to_dispatch, params=normalized["params"])
+                        status = (state or {}).get("status")
+                        if status == "completed":
+                            gate.delivered(to_dispatch)
+                            delivery = "delivered"
+                            # renew only a motion the body actually accepted
+                            if to_dispatch in MOTION_ACTIONS:
+                                active.update(action=to_dispatch, params=normalized["params"])
+                        elif status in REFUSED_STATUSES:
+                            gate.delivered(to_dispatch)  # a definitive no: retrying cannot help
+                            delivery = "refused"
+                        else:
+                            # not delivered (or not clearly): forget it so the next tick sends it again
+                            delivery = "retry" if gate.undelivered(to_dispatch) else "abandoned"
                     if active and renewer is None:
                         renewer = asyncio.ensure_future(renew_loop())
                 emit({
@@ -212,6 +283,7 @@ async def run_live(
                     "decided": action,
                     "confirm": gate.count,
                     "dispatched": to_dispatch,
+                    "delivery": delivery,
                     "target": target,
                     "state": state,
                 })
@@ -260,6 +332,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lease-renew-seconds", type=float, default=2.0,
                         help="re-send the active motion this often to renew the body's dead-man lease; must be "
                         "comfortably below the body's BODY_MOTION_TTL_S (default 5 s)")
+    parser.add_argument("--dispatch-retries", type=int, default=3,
+                        help="how many times to re-send a motion that did not reach the body (no reply, "
+                        "transport error, failed execution) before giving up on it; a STOP is retried without limit")
     parser.add_argument("--max-ticks", type=int, default=None)
     parser.add_argument("--max-seconds", type=float, default=None)
     return parser.parse_args()
@@ -295,6 +370,7 @@ def main() -> int:
         window_ms=args.confirmation_window_ms
         if args.confirmation_window_ms is not None
         else float(os.getenv("TROT_CONFIRMATION_WINDOW_MS", "1500")),
+        max_retries=args.dispatch_retries,
     )
 
     def emit(record: dict[str, Any]) -> None:
