@@ -59,6 +59,7 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 
 ## Releases
 
+- [v1.8.4](releases/v1.8.4.md): A command that did not reach the body is sent again — `run_live` retries undelivered dispatches (STOP without limit, motions up to `--dispatch-retries`), keeps a STOP owed after an uncertain motion, and the body re-runs a repeat of a failed motion instead of mistaking it for a renewal.
 - [v1.8.3](releases/v1.8.3.md): Cancellation-safe shutdown (a signal can no longer be lost on Python before 3.12; a STOP preempts a hanging lease renewal) and a re-graded [validation matrix](validation-matrix.md) (Candidate / Experimental / Supported / Validated + evidence class; nothing Validated on real hardware yet), plus refreshed spec / roadmap / latency / catalogue docs and the `v1.8.2` release note.
 - [v1.8.2](releases/v1.8.2.md): Body-side safety — STOP on `SIGTERM` / `SIGHUP`, and a body-side dead-man motion lease (`BODY_MOTION_TTL_S`, default 5 s) so a body stops itself when its brain disappears.
 - [v1.8.1](releases/v1.8.1.md): General ROS-free body — `gpio_servo` (exercised on real hardware) and `led` actuator adapters, the [v1.8 Quick Demo](runbooks/v1.8-quick-demo.md) runbook, and the protocol-neutral / adapter-is-the-integration-point spec positioning.
