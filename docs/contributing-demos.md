@@ -33,7 +33,7 @@ A demo entry can start with:
 ```text
 Name:
 Short description:
-Status: validated / experimental / candidate
+Status: candidate / experimental / supported / validated   (definitions: docs/validation-matrix.md)
 Integration level:
 Robot or sensor endpoint:
 Brain-side compute:

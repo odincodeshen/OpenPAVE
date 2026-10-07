@@ -12,7 +12,7 @@ OpenPAVE is moving from a single validated PuppyPi + DGX demo into a four-dimens
 brain-side edge node x body endpoint x inference/application layer x seam transport
 ```
 
-The current implementation should stay easy to reproduce while the project adds clearer plugin boundaries, validation-matrix evidence, and basic performance breakdowns. DGX Spark remains the primary baseline. Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but still need baseline-style documentation before they should be presented as equal baseline targets.
+The current implementation should stay easy to reproduce while the project adds clearer plugin boundaries, validation-matrix evidence, and basic performance breakdowns. DGX Spark remains the primary baseline. Radxa O6 has been exercised as a brain over the seam (control path) and as an inference-runtime client of a remote vLLM; it still needs a baseline-style runbook for local inference. Jetson Thor and other Arm-based edge nodes have no validation evidence in this repository yet, so they should not be presented as baseline targets.
 
 ## Validated Today
 
@@ -33,7 +33,7 @@ The current implementation should stay easy to reproduce while the project adds 
 - `intent_ingress/`: HTTP intent entry point.
 - `pave_runtime/intent_schema.py`: normalized intent schema and validation helper.
 - `control_daemon/`: intent watcher, command lifecycle, robot adapter orchestration, command result, and robot state output.
-- `control_daemon/adapters.py`: `MockAdapter` and `PuppyPiAdapter`.
+- `control_daemon/adapters.py`: the robot adapters (`MockAdapter`, `PuppyPiAdapter` / `PuppyPiLocalAdapter` / `PuppyPiBridgeAdapter`, `MockArmAdapter`, camera sensors, and the ROS-free `GpioServoAdapter` / `LedAdapter`).
 - `configs/mock.env`: software-only runtime profile.
 - `configs/puppypi.env`: PuppyPi physical validation profile.
 - `scripts/run_openpave.sh`: runtime launcher.
@@ -46,6 +46,17 @@ The current implementation should stay easy to reproduce while the project adds 
 - `scenarios/`: benchmark/demo scenario definitions.
 - `ui/`: OpenPAVE-maintained `live-vlm-webui` fork as a submodule.
 
+### Seam, runtime plugins and live body (v1.5 – v1.8.2)
+
+Detail and evidence per release: `docs/releases/`; per combination: `docs/validation-matrix.md`.
+
+- [x] Seam transport plugin (`create_seam_transport`) with `raw_zenoh` and `device_connect`; real-brain runs from DGX Spark and Radxa O6 to a real PuppyPi and an RPi 5 camera.
+- [x] Plugin registries for the other dimensions: robot adapter, inference runtime (`mock`, `vllm_openai`), application runtime (`gesture_commander`), and observation source (`file`, `http_mjpeg`).
+- [x] Headless `run_inference.py` (single shot) and `run_live.py` (continuous loop with multi-observation confirmation) driving a real body over the seam, with a JPEG-snapshot camera source served from an RPi 5.
+- [x] Body-safety behaviour: single-shot motion gate and bounded lease, outcome exit codes, explicit action target, STOP on `SIGTERM` / `SIGHUP`, and a body-side dead-man motion lease (`BODY_MOTION_TTL_S`).
+- [x] ROS-free bodies: `gpio_servo` (exercised once on real hardware) and `led` (software only).
+- [ ] The v1.8 live-body paths have **not** been repeated enough to meet the stricter Supported / Validated definitions — see the status table in `docs/validation-matrix.md`.
+
 ## Experimental Now
 
 ### Brain-Body Transport
@@ -53,8 +64,9 @@ The current implementation should stay easy to reproduce while the project adds 
 - [x] zenoh MVE documents an experimental brain/body transport path.
 - [x] `PuppyPiLocalAdapter` validates co-located body-side ROS 2 execution for the PuppyPi path.
 - [x] STOP-while-moving safety timeout and escalation behavior are documented for the PuppyPi local adapter.
-- [ ] zenoh is not yet the default OpenPAVE runtime transport.
-- [ ] Transport latency, reconnect behavior, and failure reporting need benchmark coverage.
+- [x] The seam plugin (`raw_zenoh`, `device_connect`) graduated from the experiments into `pave_runtime.seam`; per-segment latency is measured by `scripts/seam_bench.py` (`docs/latency-model.md`).
+- [ ] The baseline gesture runtime (`run_openpave.sh`) still uses the ROS 2 adapter path, not the seam; the two paths coexist.
+- [ ] Reconnect behavior and failure reporting still need benchmark coverage; each `raw_zenoh` send currently opens a fresh session (~0.5 s).
 
 ### Capability Model (graduated into the runtime)
 
@@ -94,11 +106,11 @@ The current implementation should stay easy to reproduce while the project adds 
 ### Immediate Implementation Priorities
 
 - [ ] Keep `docs/openpave-platform-spec.md` as the project-level source for goals, architecture, extension model, and roadmap.
-- [ ] Maintain `docs/validation-matrix.md` as the evidence map for validated, experimental, partial, and candidate combinations.
-- [ ] Convert existing validated and experimental work into matrix rows with explicit status, integration level, config/runbook, and known limitations.
-- [ ] Formalize four-dimensional config naming and metadata: brain-side node, body endpoint/adapter, seam transport, and inference/application runtime.
-- [ ] Graduate seam transport plugin documentation around `create_seam_transport`, `SEAM_TRANSPORT`, `raw_zenoh`, and `device_connect`.
-- [ ] Add basic three-segment performance reporting: brain inference latency, seam transport latency, and body execution latency.
+- [ ] Maintain `docs/validation-matrix.md` as the evidence map for combinations at the Candidate / Experimental / Supported / Validated levels.
+- [x] Convert existing validated and experimental work into matrix rows with explicit status, integration level, config/runbook, and known limitations. (re-graded 2026-10)
+- [x] Formalize four-dimensional config naming and metadata: brain-side node, body endpoint/adapter, seam transport, and inference/application runtime. (`configs/<brain>-<body>.env` recipes)
+- [x] Graduate seam transport plugin documentation around `create_seam_transport`, `SEAM_TRANSPORT`, `raw_zenoh`, and `device_connect`. (`docs/seam-validation-runbook.md`)
+- [x] Add basic three-segment performance reporting: brain inference latency, seam transport latency, and body execution latency. (`docs/latency-model.md`, `run_inference.py` output)
 - [ ] Keep `README.md` focused as the developer entry point and move detailed historical or experimental notes into dedicated docs.
 
 ### Demo Catalogue and Integration
@@ -152,10 +164,10 @@ The current implementation should stay easy to reproduce while the project adds 
 
 ### Brain-Body Transport Upgrade
 
-- [ ] Integrate an alternate open-source transport path into the OpenPAVE runtime when ready.
-- [ ] Define where the transport layer sits relative to ROS 2 robot/sensor endpoints and OpenPAVE adapters.
-- [ ] Keep the current ROS 2 path as a baseline comparison.
-- [ ] Add transport-level health, latency, reconnect, and failure reporting.
+- [x] Integrate an alternate open-source transport path into the OpenPAVE runtime. (`create_seam_transport`: `raw_zenoh`, `device_connect`)
+- [x] Define where the transport layer sits relative to ROS 2 robot/sensor endpoints and OpenPAVE adapters. (the seam carries `{action, params}`; ROS 2, where used, lives inside the body adapter below the seam — see the platform spec)
+- [x] Keep the current ROS 2 path as a baseline comparison.
+- [ ] Add transport-level health, reconnect, and failure reporting. (latency is covered by `seam_bench.py`)
 - [ ] Add benchmark scenarios that compare ROS 2 over Wi-Fi with upgraded transport paths.
 - [ ] Document which application patterns should use the baseline ROS 2 path versus an upgraded transport path.
 
@@ -178,10 +190,13 @@ The current implementation should stay easy to reproduce while the project adds 
 - ROS 2 over Wi-Fi and DDS/RMW behavior can vary by machine, network, container image, and firewall settings.
 - The validated default RMW path remains `rmw_fastrtps_cpp`; `rmw_cyclonedds_cpp` is documented as an environment-specific workaround.
 - Current benchmark coverage focuses on control-path validation; full sensor/VLM/VLA quality replay is future work.
-- Multi-robot and multi-sensor routing are not implemented in the validated baseline yet.
+- Multi-robot and multi-sensor routing are not implemented in the baseline path. On the seam path a body can be chosen with `--action-target`, and `device_connect` rejects an ambiguous multi-body discovery, but there is no fleet management.
+- The body-side dead-man lease lives in the body process: if that process itself crashes, a controller running separately (e.g. PuppyPi's `puppy_control` in its own container) is not stopped. The lease has been verified against a mock body and a dry-run servo, not yet against a physical actuator or the real dog.
+- The `device_connect` backend shares the lease code, but its `serve()` wiring has no automated test and has not been run against a live Device Connect runtime.
 
 ## Release Notes
 
 - `v1.4.0-pre-cleanup` preserves the pre-cleanup full-history baseline.
 - `v1.4.0-pre-cleanup.1` includes the updated Stage 3 release validation guide and known ROS 2 DDS/RMW issue documentation.
 - The `release/v1.4-validated-baseline` cleanup branch makes the current validated baseline the default project entry point.
+- `v1.5.0-seam` through `v1.8.3` (seam plugin, Quickstart, inference/application runtime, live body, ROS-free bodies, body-side safety) are documented in `docs/releases/` and listed in `docs/index.md`.

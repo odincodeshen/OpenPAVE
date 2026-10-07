@@ -4,16 +4,19 @@ This catalogue tracks Physical AI demos that are validated, experimental, or pla
 
 ## Status Labels
 
-- **Validated**: reproduced with documented runbooks and known limitations.
+The status words are the ones defined in `docs/validation-matrix.md` (Candidate → Experimental → Supported → Validated, with an evidence class); the matrix is authoritative and holds the per-combination grading. In this catalogue:
+
+- **Supported**: run through its complete flow on real hardware and reproducible from a documented runbook; not yet at the repeat-count / benchmark bar for Validated.
+- **Validated**: Supported plus structured benchmark results, recorded artifacts and documented limitations (see the matrix for the exact bar). No demo on real hardware is at this level yet.
 - **Experimental**: implemented or tested as an MVE, but not part of the default validated baseline.
 - **Candidate**: identified as a useful future demo or integration target.
 
-## Validated Demos
+## Supported Demos
 
 ### PuppyPi + DGX Brain-Control Reference Path
 
 ```text
-Status: Validated
+Status: Supported (evidence class: hardware; the pre-2026-10 catalogue called this Validated)
 Integration level: Level 3 / partial Level 4
 Brain-side compute: DGX (Armv9 Grace CPU + Nvidia GPU)
 Robot endpoint: PuppyPi quadruped

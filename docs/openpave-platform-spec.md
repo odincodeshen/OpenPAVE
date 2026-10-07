@@ -40,12 +40,12 @@ A complete OpenPAVE validation configuration is a combination of four dimensions
 
 | Dimension | Role | Typical expression | Current state |
 | --- | --- | --- | --- |
-| Brain-side edge node | Local inference, orchestration, observability, benchmark runner | Config and deployment target | DGX Spark baseline; Jetson Thor, Radxa O6, and other Arm-based edge nodes validated at different levels |
-| Body-side robot or sensor endpoint | Robot, arm, camera, sensor endpoint, or future body-side policy unit | Robot/sensor adapter | PuppyPi baseline; mock, mock arm, and camera adapters exist |
-| Seam transport | Brain-body communication boundary | `SEAM_TRANSPORT` / `create_seam_transport(name)` | raw zenoh and device-connect backends exist as experimental transport plugins |
-| Inference or upper-layer application | VLM/VLA runtime, planner, or policy-facing application layer | OpenAI-compatible API today; future `create_inference_runtime(name)` | vLLM/OpenAI-compatible API baseline; pluginization is roadmap |
+| Brain-side edge node | Local inference, orchestration, observability, benchmark runner | Config and deployment target | DGX Spark baseline; Radxa O6 exercised as a seam brain and as a client of a remote vLLM; no evidence yet for Jetson Thor or other nodes |
+| Body-side robot or sensor endpoint | Robot, arm, camera, sensor endpoint, or future body-side policy unit | Robot/sensor adapter (`create_robot_adapter`) | PuppyPi (ROS 2) baseline and seam body; ROS-free `gpio_servo` (real hardware) and `led`; RPi 5 USB camera sensor; mock and mock arm |
+| Seam transport | Brain-body communication boundary | `SEAM_TRANSPORT` / `create_seam_transport(name)` | `raw_zenoh` and `device_connect` plugins, exercised on real hardware from DGX Spark and Radxa O6; body-side dead-man lease |
+| Inference or upper-layer application | VLM/VLA runtime, planner, or policy-facing application layer | `create_inference_runtime(name)`, `create_application_runtime(name)`, `create_observation_source(name)` | Registries exist; one real inference backend (`vllm_openai`) and one application (`gesture_commander`); the v1.0 `/pave` baseline still runs inference inside the UI |
 
-The brain-side node is treated as a deployment target rather than a normal software plugin. The other three dimensions are expected to become registered plugin surfaces.
+The brain-side node is treated as a deployment target rather than a normal software plugin. The other three dimensions are registered plugin surfaces (`create_robot_adapter`, `create_seam_transport`, and the inference / application / observation registries); what is still thin is the number of real backends behind the newer ones.
 
 ### The inference / application dimension is domain-general
 
@@ -58,9 +58,12 @@ applications:
 - an **end-to-end VLA policy** driving a robot arm — e.g. SmolVLA + SO-101, per the Arm learning paths;
 - a **planner, an agent, or an external developer's own project** that emits capability commands.
 
-`create_inference_runtime(name)` (roadmap, 2.0) makes this a registered plugin surface like the seam,
-so a new application is a registered backend rather than a fork. Until then OpenPAVE ships an
-OpenAI-compatible VLM API with the gesture demo as its reference application.
+`create_inference_runtime(name)` and `create_application_runtime(name)` make this a registered plugin
+surface like the seam, so a new application is a registered backend rather than a fork. Today the
+registries hold `vllm_openai` and `gesture_commander` (plus mock backends); a second real backend — for
+example a local model server, or a VLA policy — is what would prove the slot is as general as described.
+The v1.0 `/pave` baseline path still performs its inference inside the UI rather than through these
+registries.
 
 ### The body dimension is protocol-neutral: adopting a controller is an adapter
 
@@ -100,12 +103,13 @@ UI_MODEL=...
 
 Adapters are reusable parts. Configs are validated combinations of parts.
 
-Current baseline configs:
+Current configs:
 
-- `configs/mock.env`: software-only validation.
-- `configs/puppypi.env`: PuppyPi physical validation.
+- `configs/mock.env`: software-only validation (also carries the v1.7 inference/application keys).
+- `configs/puppypi.env`: PuppyPi physical validation on the baseline ROS 2 path.
+- `configs/<brain>-<body>.env` seam recipes — `dgx-puppypi`, `radxa-puppypi` (actuator) and `dgx-rpicam`, `radxa-rpicam` (sensor) — each pinning the brain, body, `SEAM_TRANSPORT` and inference settings; run them with `scripts/seam_run.sh` (`docs/seam-validation-runbook.md`).
 
-Future configs should use explicit names such as `configs/dgx-puppypi.env` when the matrix grows beyond one primary physical target.
+The ROS-free servo and LED bodies have no recipe yet; their runbook (`docs/runbooks/v1.8-quick-demo.md`) sets the variables inline.
 
 ## Integration Levels
 
@@ -136,12 +140,13 @@ The seam is the brain-body communication boundary.
 
 Current status:
 
-- The validated baseline still uses the current ROS 2 / adapter path for the PuppyPi workflow.
-- `pave_runtime.seam` introduces a pluggable transport registry.
-- `raw_zenoh` and `device_connect` are experimental seam transport backends.
-- `scripts/seam_cli.py` provides a simple body/brain CLI over the selected transport.
+- The v1.0 baseline gesture runtime (`run_openpave.sh`) still uses the ROS 2 / adapter path for the PuppyPi workflow; it does not go through the seam.
+- `pave_runtime.seam` is a pluggable transport registry (`create_seam_transport`). `raw_zenoh` and `device_connect` are the two backends, exercised on real hardware from DGX Spark and Radxa O6 against a real PuppyPi and an RPi 5 camera (`docs/validation-matrix.md`).
+- `scripts/seam_cli.py` is the body/brain CLI over the selected transport; `scripts/run_inference.py --seam` and `scripts/run_live.py` drive a real body through it (`docs/v1.8-live-body.md`).
+- The seam carries low-rate semantic capability actions (`{action, params}`), not a high-rate control stream: each `raw_zenoh` send currently opens a fresh session (~0.5 s, see `docs/latency-model.md`).
+- The body keeps a **dead-man motion lease** (`BODY_MOTION_TTL_S`, default 5 s): a `trot` / `move` the brain stops renewing is stopped by the body itself, over either backend.
 
-The transport plugin goal is to make the same body-side adapter and capability dispatch work over different communication backends.
+The transport plugin goal is to make the same body-side adapter and capability dispatch work over different communication backends — and the same brain command drives a ROS 2 body or a ROS-free one.
 
 ## Performance and Benchmarking
 
@@ -168,13 +173,13 @@ brain-side node x body endpoint x inference/application layer x seam transport
 
 Each cell should record:
 
-- validation status
+- validation status — Candidate, Experimental, Supported or Validated, plus whether the evidence is `software` or `hardware`
 - integration level
 - config or runbook
 - benchmark results, if available
 - known limitations
 
-See `docs/validation-matrix.md`.
+A combination is only Supported or Validated on evidence from running that combination on its real hardware; an upstream project's own hardware claims do not count. See `docs/validation-matrix.md` for the definitions and the current grading.
 
 ## Main Repository Policy
 
@@ -189,38 +194,46 @@ The project should selectively integrate contributions that improve one of these
 - strategically useful Physical AI demo or scenario
 - benchmark or validation improvement
 
-## Current Validated and Experimental State
+## Current State
 
 Current baseline:
 
-- PuppyPi + DGX is the first validated deep-integration target.
+- PuppyPi + DGX is the first validated deep-integration target (the v1.0 baseline path).
 - DGX Spark is the primary brain-side baseline.
-- Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but not all have baseline-quality runbooks in this repository yet.
+- Radxa O6 has been exercised as a seam brain, with PuppyPi and the RPi 5 camera as bodies, and as a client of a remote vLLM; it has no local-inference runbook yet. Jetson Thor and other Arm-based edge nodes have no evidence in this repository.
 
-Current experimental work:
+Implemented, with real-hardware runs but short of the Validated bar (see the matrix for the exact grading):
 
+- seam transport plugin (`raw_zenoh`, `device_connect`) with PuppyPi and camera bodies
+- headless inference/application runtime, the live-body loop, and the body-side safety lease
+- ROS-free `gpio_servo` body
 - persistent PuppyPi bridge for lower-latency robot command execution
-- neutral non-ROS seam over raw zenoh
-- device-connect seam backend
 - capability model spanning locomotion, manipulation, and sensing
-- camera sensing MVE with a control-plane / data-plane split
+- camera sensing with a control-plane / data-plane split
 
 ## Roadmap
 
-Near-term roadmap:
+Done since the first roadmap:
 
-- Formalize the validation matrix.
-- Graduate seam transport plugins from experiments into documented runtime paths.
-- Four-dimensional config cleanup.
-- Add basic three-segment performance reporting: brain inference, seam transport, body execution.
+- The validation matrix exists and is graded against explicit status definitions.
+- Seam transport plugins graduated from experiments into `pave_runtime.seam`, with runbooks and recipes.
+- Four-dimensional config recipes (`configs/<brain>-<body>.env`).
+- Three-segment latency reporting (`docs/latency-model.md`, `scripts/seam_bench.py`, and the latency block of `run_inference.py`).
+- The inference / application / observation plugin registries and the live-body loop.
+- A body-side safety lease and signal-safe STOP on the brain drivers.
+
+Next:
+
+- A second real inference backend (for example a local model server) and a second application, to show those registries are as swappable as the seam; this would also give Radxa O6 a self-contained local-inference path.
+- Move the v1.0 `/pave` gesture path onto the inference / application registries, so the UI stops owning inference.
+- Repeat the live-body and ROS-free body runs often enough, with structured results, to reach Validated; verify the safety lease against a physical actuator and the real dog, and close its body-process-crash gap.
 - Keep the validated baseline easy to reproduce.
 
 Longer-term roadmap:
 
 - Native OpenPAVE console independent from the `live-vlm-webui` fork.
-- `create_inference_runtime(name)` or equivalent inference runtime plugin boundary.
 - Sensor replay and full VLM/VLA output-quality benchmark support.
 - Additional body endpoints such as SO-101 and Raspberry Pi ROS 2 car/camera.
-- Additional brain-side Arm edge nodes with documented validation levels.
+- Additional brain-side Arm edge nodes with documented evidence (Jetson Thor has none yet).
 - Multi-device / fabric-style transport experiments.
 

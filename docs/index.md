@@ -8,7 +8,7 @@ OpenPAVE documentation is organized around the current validated baseline, demo 
 - [OpenPAVE Platform Specification](openpave-platform-spec.md): project specification, goals, four-dimensional model, repository policy, and roadmap.
 - [v1.7 Inference/Application Runtime Plugin Specification](v1.7_spec.md): construction specification for the headless inference and application plugin boundary.
 - [v1.8 Live Body](v1.8-live-body.md): experimental PuppyPi HTTP/MJPEG observation input and live-body integration status.
-- [Validation Matrix](validation-matrix.md): evidence map for validated, experimental, partial, and candidate hardware/workflow combinations.
+- [Validation Matrix](validation-matrix.md): evidence map for hardware/workflow combinations, graded Candidate / Experimental / Supported / Validated with an evidence class.
 - [Seam Validation Runbook](seam-validation-runbook.md): reproduce the real-brain seam matrix (brain × body × transport) with the four-dimension config recipes, `deploy_seam.sh`, and `seam_run.sh`.
 - [Seam Latency Model](latency-model.md): three-segment (inference / seam / execution) latency breakdown with measured numbers and `seam_bench.py`.
 - [Validated Baseline](validated-baseline.md): primary runbook for reproducing OpenPAVE Validated Baseline v1.0.
@@ -59,9 +59,11 @@ Self-contained, first-timer-friendly runbooks — one per validated config combi
 
 ## Releases
 
-- [v1.8.1](releases/v1.8.1.md): General ROS-free body — `gpio_servo` (real-hardware validated) and `led` actuator adapters, the [v1.8 Quick Demo](runbooks/v1.8-quick-demo.md) runbook, and the protocol-neutral / adapter-is-the-integration-point spec positioning.
-- [v1.8.0](releases/v1.8.0.md): Live Body — ObservationSource plugin (`--input-url`), real-body dispatch over the seam (`run_inference.py --seam`) with a motion safety gate / lease / outcome exit codes / `--action-target`, and the persistent `scripts/run_live.py` loop (multi-observation confirmation, watchdog, fail-safe STOP); real-dog validated (single-shot + live loop).
-- [v1.7.0](releases/v1.7.0.md): Inference/Application runtime plugin — headless `create_inference_runtime` + `vllm_openai` backend, `gesture_commander` application, capability + safety, and `scripts/run_inference.py`; real-DGX validated (RPi5 camera → vLLM → dispatch to mock).
+- [v1.8.3](releases/v1.8.3.md): Cancellation-safe shutdown (a signal can no longer be lost on Python before 3.12; a STOP preempts a hanging lease renewal) and a re-graded [validation matrix](validation-matrix.md) (Candidate / Experimental / Supported / Validated + evidence class; nothing Validated on real hardware yet), plus refreshed spec / roadmap / latency / catalogue docs and the `v1.8.2` release note.
+- [v1.8.2](releases/v1.8.2.md): Body-side safety — STOP on `SIGTERM` / `SIGHUP`, and a body-side dead-man motion lease (`BODY_MOTION_TTL_S`, default 5 s) so a body stops itself when its brain disappears.
+- [v1.8.1](releases/v1.8.1.md): General ROS-free body — `gpio_servo` (exercised on real hardware) and `led` actuator adapters, the [v1.8 Quick Demo](runbooks/v1.8-quick-demo.md) runbook, and the protocol-neutral / adapter-is-the-integration-point spec positioning.
+- [v1.8.0](releases/v1.8.0.md): Live Body — ObservationSource plugin (`--input-url`), real-body dispatch over the seam (`run_inference.py --seam`) with a motion safety gate / lease / outcome exit codes / `--action-target`, and the persistent `scripts/run_live.py` loop (multi-observation confirmation, watchdog, fail-safe STOP); run on the real dog (single-shot + live loop).
+- [v1.7.0](releases/v1.7.0.md): Inference/Application runtime plugin — headless `create_inference_runtime` + `vllm_openai` backend, `gesture_commander` application, capability + safety, and `scripts/run_inference.py`; run on a real DGX (RPi5 camera → vLLM → dispatch to mock).
 - [v1.6.0](releases/v1.6.0.md): Quickstart & docs — bilingual Quickstart, per-config runbooks, redesigned architecture diagram, doc reorg, and the domain-general inference-dimension positioning.
 - [v1.5.0-seam](releases/v1.5.0-seam.md): seam transport plugin milestone — plugin + real-brain validation matrix (DGX + Radxa O6 × PuppyPi/camera) + config recipes, tooling, latency model, and single-source dispatch.
 

@@ -71,6 +71,8 @@ scripts/seam_run.sh configs/radxa-puppypi.env brain send stop
 Each prints `state: {... "status": "completed", "detail": {"path": "bridge", "latency_ms": ...}}`.
 The dog homes → trots → stops. Confirm with the RPi5 camera if available.
 
+> **Since v1.8.2 the body stops a motion that is not renewed** — a `trot` / `move` lasts `BODY_MOTION_TTL_S` (default 5 s) unless the brain re-sends it. A one-shot `send trot` therefore marks time for about 5 s and then the body stops itself; still send `stop` to end it cleanly. (`run_live.py` renews automatically.)
+
 ## 5. Swap the transport
 
 Change one line in `configs/radxa-puppypi.env` (on both the body's repo and the brain's bundle):

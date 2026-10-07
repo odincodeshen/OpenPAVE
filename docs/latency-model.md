@@ -28,7 +28,7 @@ brain                                   body
 
 | Segment | Value | How measured |
 | --- | --- | --- |
-| Inference (VLM) | not yet measured in-seam | Roadmap. The benchmark harness (`scripts/run_benchmark.py`) measures the control path today; folding a VLM-inference segment in is future work. |
+| Inference (VLM) | **~1.0–1.2 s** per frame (`llava-v1.6-mistral-7b-hf` on DGX Spark, `vllm_openai`): 1187 ms (DGX, local vLLM), 1011 ms (DGX, with the seam dispatch), 1000 ms (Radxa O6 calling the DGX vLLM across the LAN) | `scripts/run_inference.py` reports it as `latency.inference_ms` (2026-09-03, one frame each — three data points, not a distribution). It is a one-shot figure outside the seam; `run_live.py` does not yet aggregate per-tick timings. |
 | Seam — session setup | ~0.5 s per call for `raw_zenoh` (a fixed `asyncio.sleep(0.5)` discovery settle in the backend); `device_connect` pays D2D discovery of similar order. Under rapid per-call churn it can rise toward ~1 s. | `scripts/seam_bench.py` against a `mock_arm` body (execution ≈ 0), first send / per-call. |
 | Seam — steady-state wire | **~0.58 ms p50, 0.65 ms p95** (max 1.14 ms), `raw_zenoh` | Persistent single zenoh session, 30 round trips to a `mock_arm` body on one host. |
 | Execution | **home/stop ~514 ms, trot ~1013 ms** (`path=bridge`) | Real PuppyPi over the persistent bridge; see `docs/validation-matrix.md`. |

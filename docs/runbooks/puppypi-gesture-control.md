@@ -90,7 +90,7 @@ The `/pave` console (WebRTC) takes video from one of:
 3. Start the stream. Show 👍 → the dog **TROT**s; show an open palm 🖐 → the dog **STOP**s. `TROT`
    requires two confirmations within the window (safety); anything ambiguous is `STOP`.
 
-## Validated (2026-09-02)
+## Verified so far (2026-09-02)
 
 - ✅ **Runtime**: `run_openpave.sh` brings up ingress + control_daemon + `/pave` on the DGX.
 - ✅ **Inference**: vLLM chat-completion returns the instructed word (gesture prompt works).

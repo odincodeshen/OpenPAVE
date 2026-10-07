@@ -76,10 +76,10 @@ PuppyPi + DGX Spark
 
 | Dimension | Role | Current state |
 | --- | --- | --- |
-| Brain-side edge node | Local inference、orchestration、UI、benchmark runner | DGX Spark baseline；Jetson Thor、Radxa O6 與其他 Arm-based edge nodes 已完成不同程度驗證 |
-| Body-side robot/sensor endpoint | Robot、arm、camera、sensor endpoint 或 future body-side policy unit | PuppyPi baseline；已有 mock、mock arm、camera adapters |
-| Seam transport | Brain-body communication boundary | baseline adapter path；raw zenoh 與 device-connect 屬 experimental |
-| Inference / upper-layer application | VLM/VLA backend、planner 或 policy layer | 目前是 vLLM/OpenAI-compatible API；pluginization 是 roadmap |
+| Brain-side edge node | Local inference、orchestration、UI、benchmark runner | DGX Spark baseline；Radxa O6 已作為 seam brain 與遠端 vLLM client 跑過；Jetson Thor 與其他節點在本 repo 尚無證據 |
+| Body-side robot/sensor endpoint | Robot、arm、camera、sensor endpoint 或 future body-side policy unit | PuppyPi(ROS 2)baseline 與 seam body；無 ROS 2 的 `gpio_servo`、`led`；RPi 5 camera sensor；mock 與 mock arm |
+| Seam transport | Brain-body communication boundary | baseline adapter path,另有已在真機跑過的 `raw_zenoh`、`device_connect` seam plugin(評級見 matrix)|
+| Inference / upper-layer application | VLM/VLA backend、planner 或 policy layer | 已有 `create_inference_runtime` / `create_application_runtime` registry(`vllm_openai`、`gesture_commander`);v1.0 的 `/pave` 路徑仍在 UI 內做推論 |
 
 Configs 會把這些維度綁成可重複執行的 recipes。例如：
 
@@ -172,12 +172,12 @@ OpenPAVE 用 validation matrix 追蹤支援狀態，而不是直接宣稱所有�
 - [Validated Baseline](docs/validated-baseline.md)
 - [PuppyPi + DGX Target](docs/targets/puppypi-dgx.md)
 
-目前狀態摘要：
+每一列有**狀態**(Candidate → Experimental → Supported → Validated)與**證據類別**(`hardware` 或 `software`);定義,以及舊標籤如何重新評級,都寫在 matrix 裡。目前狀態摘要:
 
-- **Baseline**: DGX Spark + PuppyPi，透過 validated runtime path。
-- **Experimental**: persistent PuppyPi bridge、raw zenoh neutral seam、device-connect seam、capability 與 camera MVEs。
-- **Partial**: Jetson Thor、Radxa O6 與其他 Arm-based edge nodes 已完成不同程度驗證，但仍需要 baseline-style matrix rows 和 runbooks。
-- **Candidate**: SO-101 robot arm + camera、Raspberry Pi ROS 2 car/camera。
+- **Supported**(在真機上完整跑過一次,並可依 runbook 重現):DGX Spark 與 Radxa O6 → PuppyPi(`raw_zenoh`、`device_connect`);兩個 brain → RPi 5 相機;v1.0 的 DGX Spark + PuppyPi baseline 路徑;僅軟體的 mock-arm 路徑。
+- **Validated**(僅 `software`):DGX Spark + mock robot 的 control-path benchmark。**真機上目前沒有任何一列是 Validated** —— 那需要每個動作 ≥10 次、結構化結果與 benchmark。
+- **Experimental**:v1.7/v1.8 的 inference → seam → 真機器人路徑與 live loop、無 ROS 2 的 `gpio_servo` body、persistent PuppyPi bridge、`/pave` console 路徑。這些在真機上跑過,但有部分是 mock 或強制輸出,或次數不足。
+- **Candidate**:Jetson Thor、其他 Arm-based edge nodes、SO-101 robot arm + camera、Raspberry Pi ROS 2 car/camera。
 
 ## 重現 Seam 驗證
 
@@ -236,13 +236,13 @@ python3 scripts/run_inference.py --input frame.jpg --seam raw_zenoh
 # inference -> gesture_commander -> capability -> seam -> 狗（dispatch.state: completed, path=bridge）
 ```
 
-真機端到端已驗證（2026-09-03）：RPi5 相機影像 → DGX vLLM（`vllm_openai`，約 1 秒）→
+真機端到端已跑過（2026-09-03;matrix 評為 **Experimental** —— TROT 由 mock runtime 強制產生,且只跑了一次短時間）:RPi5 相機影像 → DGX vLLM（`vllm_openai`，約 1 秒）→
 `gesture_commander` → `raw_zenoh` seam → 實體 PuppyPi（`path=bridge`，約 514 ms）。逐步復現（狗
 bring-up、brain 設定、先安全 STOP 再跑完整鏈路、清理）見 **[v1.8 Live Body](docs/v1.8-live-body.md)**。
 
 **Body 是 plugin。** 同一條 brain 指令,只改 `ROBOT_ADAPTER` 一行,就能驅動 `gpio_servo`(GPIO,**無 ROS 2**)、
 `mock`、或實體 PuppyPi(`puppypi_bridge`,ROS 2)—— seam 與 `{action, params}` 契約都不變。一個通用、無 ROS 2 的
-demo(RPi 5 相機 + 伺服,真機已驗證)就是 [v1.8 Quick Demo](docs/runbooks/v1.8-quick-demo.md)。
+demo(RPi 5 相機 + 伺服,已在真機跑過)就是 [v1.8 Quick Demo](docs/runbooks/v1.8-quick-demo.md)。
 
 > ⚠️ **真狗運動已加 gate。** 單發 `--seam` **預設擋住運動動詞(`trot`/`move`)**,除非加 `--allow-motion`
 > —— 屆時 CLI 會短暫 hold 後**自動送 STOP**(含 `Ctrl+C`);`stop`/`home`/`estop` 一律放行。dispatch outcome
@@ -295,10 +295,10 @@ docs/archive/
 ## Current Limitations
 
 - Default PuppyPi command path 使用 Dockerized one-shot ROS 2 CLI calls。Experimental persistent bridge 已存在，但尚未成為 default。
-- Default brain-body path 仍是 validated baseline adapter path。Raw zenoh 和 device-connect seam transports 屬 experimental。
+- Default brain-body path 仍是 v1.0 baseline adapter path。`raw_zenoh` 與 `device_connect` seam transport 已在真機跑過,評級見 `docs/validation-matrix.md`,但 baseline gesture runtime 並不使用它們。
 - `/pave` 目前仍位於 OpenPAVE-maintained `live-vlm-webui` fork。未來規劃 OpenPAVE native console。
 - 目前 benchmark coverage 聚焦 control-path validation。完整 sensor replay 和 VLM/VLA quality benchmark 是 future work。
-- 其他 Arm-based edge nodes 已完成不同程度驗證，但大多仍需要 baseline-quality runbooks 和 matrix entries。
+- Radxa O6 已作為 seam brain 跑過;Jetson Thor 與其他 Arm-based edge nodes 在本 repo 尚無文件化證據(matrix:Candidate)。
 
 ## Third-Party Notice
 

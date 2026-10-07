@@ -28,7 +28,7 @@ The current validated deep-integration target is PuppyPi + DGX. That target prov
 
 Arm-based Linux systems are widely used as robot endpoints, embedded controllers, edge gateways, and developer-accessible robotics platforms.
 
-DGX Spark is the primary validated baseline for the brain-side node. Jetson Thor, Radxa O6, and other Arm-based edge nodes have been validated at different levels, but still need baseline-quality runbooks and matrix entries before they should be presented as equivalent baseline targets.
+DGX Spark is the primary validated baseline for the brain-side node. Radxa O6 has been exercised as a seam brain; Jetson Thor and other Arm-based edge nodes have no documented evidence in this repository (see `docs/validation-matrix.md`), so none of them should be presented as equivalent baseline targets yet.
 
 OpenPAVE aims to show how these systems can participate in local Physical AI workflows using open-source software and local inference infrastructure.
 
@@ -69,7 +69,7 @@ Current baseline target:
 
 - DGX (Armv9 Grace CPU + Nvidia GPU) running vLLM and OpenPAVE runtime services
 
-Experimentally or partially validated targets:
+Exercised or candidate targets (see the matrix for each one's grade):
 
 - Jetson Thor
 - Radxa O6
