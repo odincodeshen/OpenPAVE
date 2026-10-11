@@ -8,6 +8,7 @@ zenoh, or robot.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import unittest
 from unittest import mock
 
@@ -619,6 +620,230 @@ class LiveLoopTests(unittest.TestCase):
             )
         self.assertEqual(len(sleeps), 3)                 # one pacing sleep per (failed) tick
         self.assertTrue(all(abs(s - 2.0) < 0.5 for s in sleeps))
+
+
+class LeaseLostTests(unittest.TestCase):
+    """v1.8.5: a renewal can no longer restart a motion whose lease the body has already ended."""
+
+    def _scenario(self, *, confirmations=2, confirmations_after_cut=None, cut_for=0.5, ttl=0.2, ticks_after=0.4):
+        """Real BodyLease behind a cuttable link. Returns (body actions, brain records)."""
+        from pave_runtime.lease import BodyLease, guarded_dispatch
+        from tests.test_lease import RecordingAdapter
+
+        body = RecordingAdapter()
+        lease = BodyLease(ttl_s=ttl)
+        records: list[dict] = []
+        gate = MotionGate(confirmations=confirmations)
+
+        class CuttableSeam(FakeSeam):
+            reachable = True
+
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if not self.reachable:
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return guarded_dispatch(body, lease, action, params)
+
+        async def scenario():
+            seam = CuttableSeam()
+            watcher = asyncio.ensure_future(lease.watch(body, poll_s=0.01))
+            task = asyncio.ensure_future(
+                run_live(
+                    source=FakeSource(),
+                    runtime=ScriptRuntime(["TROT"] * 10000),
+                    application=create_application_runtime("gesture_commander"),
+                    seam=seam,
+                    prompt="p",
+                    gate=gate,
+                    period_s=0.02,
+                    watchdog_s=1.0,
+                    lease_renew_s=0.05,
+                    emit=records.append,
+                )
+            )
+            await asyncio.sleep(0.3)  # moving, renewed
+            if confirmations_after_cut is not None:
+                gate.confirmations = confirmations_after_cut
+            seam.reachable = False  # the link drops for longer than the lease
+            await asyncio.sleep(cut_for)
+            seam.reachable = True  # ...and comes back; the brain's renewals resume
+            await asyncio.sleep(ticks_after)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopUnconfirmed):
+                await task
+            watcher.cancel()
+
+        asyncio.run(scenario())
+        return body.actions(), records
+
+    def test_a_link_that_comes_back_after_the_lease_expired_does_not_restart_the_motion_by_itself(self):
+        # Before v1.8.5 the first renewal after the outage was a bare `trot`, which the body started anew
+        # with no decision behind it. Now the renewal is refused and the loop must re-confirm.
+        actions, records = self._scenario(confirmations=1, confirmations_after_cut=500)  # no re-confirm in time
+        self.assertEqual(actions[:2], ["trot", "stop"])  # started, then the BODY stopped itself
+        self.assertEqual(actions.count("trot"), 1, actions)  # and nothing started it again
+        events = [r["event"] for r in records if "event" in r]
+        self.assertIn("lease_lost", events)
+        self.assertEqual(events.count("lease_lost"), 1)  # it stopped renewing the dead lease
+
+    def test_the_motion_is_restarted_only_after_it_is_confirmed_again(self):
+        actions, records = self._scenario(confirmations=3)
+        self.assertEqual(actions[:3], ["trot", "stop", "trot"], actions)  # a deliberate, re-confirmed restart
+        lost_at = next(i for i, r in enumerate(records) if r.get("event") == "lease_lost")
+        restarts = [r for r in records[lost_at:] if r.get("dispatched") == "trot"]
+        self.assertEqual(len(restarts), 1)
+        self.assertEqual(restarts[0]["confirm"], 3)  # it counted its way up again from zero
+
+    def test_an_uninterrupted_motion_is_renewed_without_ever_being_re_commanded(self):
+        from pave_runtime.lease import BodyLease, guarded_dispatch
+        from tests.test_lease import RecordingAdapter
+
+        body = RecordingAdapter()
+        lease = BodyLease(ttl_s=0.2)
+
+        class DirectSeam(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                return guarded_dispatch(body, lease, action, params)
+
+        async def scenario():
+            seam = DirectSeam()
+            watcher = asyncio.ensure_future(lease.watch(body, poll_s=0.01))
+            task = asyncio.ensure_future(
+                run_live(
+                    source=FakeSource(),
+                    runtime=ScriptRuntime(["TROT"] * 10000),
+                    application=create_application_runtime("gesture_commander"),
+                    seam=seam,
+                    prompt="p",
+                    gate=MotionGate(confirmations=1),
+                    period_s=0.02,
+                    watchdog_s=1.0,
+                    lease_renew_s=0.05,
+                    emit=lambda r: None,
+                )
+            )
+            await asyncio.sleep(0.6)  # three TTLs
+            moving = body.actions()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            watcher.cancel()
+            return seam, moving
+
+        seam, moving = asyncio.run(scenario())
+        self.assertEqual(moving, ["trot"])  # one gait command; every renewal was a `renew`
+        self.assertGreaterEqual(seam.sent.count("renew"), 5)
+        self.assertEqual(body.actions(), ["trot", "stop"])
+
+    def test_lease_lost_neither_sends_a_stop_nor_owes_one(self):
+        gate = MotionGate(confirmations=1)
+        self.assertEqual(gate.admit("trot", 0.0), "trot")
+        gate.lease_lost()
+        self.assertFalse(gate.force_stop())  # nothing owed at shutdown: the body already stopped itself
+
+    def test_lease_lost_makes_the_next_motion_earn_its_confirmations_again(self):
+        gate = MotionGate(confirmations=3, window_ms=100000)
+        for t in (0, 1, 2):
+            gate.admit("trot", float(t))
+        self.assertEqual(gate.current, "trot")
+        for t in (3, 4, 5, 6):  # a long run of "trot" decisions while it is moving
+            self.assertIsNone(gate.admit("trot", float(t)))
+        gate.lease_lost()
+        self.assertIsNone(gate.admit("trot", 7.0))  # 1 of 3
+        self.assertIsNone(gate.admit("trot", 8.0))  # 2 of 3
+        self.assertEqual(gate.admit("trot", 9.0), "trot")  # 3 of 3
+
+    def test_after_lease_lost_a_stop_decision_is_not_re_sent(self):
+        gate = MotionGate(confirmations=1)
+        gate.admit("trot", 0.0)
+        gate.lease_lost()
+        self.assertIsNone(gate.admit("stop", 1.0))  # already stopped: edge-triggered
+
+    def test_a_body_older_than_v1_8_5_is_renewed_the_legacy_way_and_flagged(self):
+        # The fake body gives no lease_id, like a pre-v1.8.5 body.
+        seam = FakeSeam()
+        records: list[dict] = []
+        asyncio.run(
+            run_live(
+                source=FakeSource(),
+                runtime=ScriptRuntime(["TROT"] * 8),
+                application=create_application_runtime("gesture_commander"),
+                seam=seam,
+                prompt="p",
+                gate=MotionGate(confirmations=1),
+                period_s=0.04,
+                watchdog_s=1.0,
+                lease_renew_s=0.02,
+                max_ticks=8,
+                emit=records.append,
+            )
+        )
+        self.assertGreaterEqual(seam.sent.count("trot"), 4)  # the motion re-sent as before
+        self.assertNotIn("renew", seam.sent)
+        self.assertIn("lease_legacy_body", [r.get("event") for r in records])
+
+    def test_a_body_that_does_not_know_renew_is_downgraded_to_the_legacy_resend(self):
+        class RenewUnsupported(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "renew":
+                    return {"status": "unsupported", "action": "renew"}
+                return {"status": "completed", "action": action, "detail": {"lease_id": "L1"}}
+
+        seam = RenewUnsupported()
+        records: list[dict] = []
+        asyncio.run(
+            run_live(
+                source=FakeSource(),
+                runtime=ScriptRuntime(["TROT"] * 10),
+                application=create_application_runtime("gesture_commander"),
+                seam=seam,
+                prompt="p",
+                gate=MotionGate(confirmations=1),
+                period_s=0.04,
+                watchdog_s=1.0,
+                lease_renew_s=0.02,
+                max_ticks=10,
+                emit=records.append,
+            )
+        )
+        self.assertEqual(seam.sent.count("renew"), 1)  # tried once, then gave up on the verb
+        self.assertGreaterEqual(seam.sent.count("trot"), 4)  # ...and kept the motion alive the old way
+        events = [r.get("event") for r in records]
+        self.assertEqual(events.count("renew_downgraded"), 1)
+        self.assertNotIn("renew_failed", events)
+
+    def test_a_lost_renewal_reply_is_a_failure_not_a_lost_lease(self):
+        # no_reply is ambiguous (the body may or may not have it): keep renewing, don't forget the motion
+        class FlakyRenew(FakeSeam):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                self.sent.append(action)
+                if action == "renew":
+                    return {"status": "no_reply", "error": "timeout", "action": action}
+                return {"status": "completed", "action": action, "detail": {"lease_id": "L1"}}
+
+        seam = FlakyRenew()
+        records: list[dict] = []
+        asyncio.run(
+            run_live(
+                source=FakeSource(),
+                runtime=ScriptRuntime(["TROT"] * 10),
+                application=create_application_runtime("gesture_commander"),
+                seam=seam,
+                prompt="p",
+                gate=MotionGate(confirmations=1),
+                period_s=0.04,
+                watchdog_s=1.0,
+                lease_renew_s=0.02,
+                max_ticks=10,
+                emit=records.append,
+            )
+        )
+        events = [r.get("event") for r in records]
+        self.assertGreaterEqual(events.count("renew_failed"), 3)
+        self.assertNotIn("lease_lost", events)
+        self.assertGreaterEqual(seam.sent.count("renew"), 4)  # still trying
 
 
 if __name__ == "__main__":

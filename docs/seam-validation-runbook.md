@@ -87,7 +87,7 @@ scripts/seam_run.sh configs/dgx-puppypi.env brain send stop
 scripts/seam_run.sh configs/dgx-rpicam.env  brain send get_image
 ```
 
-> **Since v1.8.2 the body stops a motion that is not renewed** — a `trot` / `move` lasts `BODY_MOTION_TTL_S` (default 5 s) unless the brain re-sends it. A one-shot `send trot` therefore marks time for about 5 s and then the body stops itself; still send `stop` to end it cleanly. (`run_live.py` renews automatically.)
+> **Since v1.8.2 the body stops a motion that is not renewed** — a `trot` / `move` lasts `BODY_MOTION_TTL_S` (default 5 s) unless the brain keeps renewing it. A one-shot `send trot` therefore marks time for about 5 s and then the body stops itself; still send `stop` to end it cleanly. (`run_live.py` renews automatically.)
 
 Each prints `state: {... "status": "completed" ...}`. Actuator actions carry
 `detail.path=bridge` and `detail.latency_ms`; `get_image` returns control-plane metadata

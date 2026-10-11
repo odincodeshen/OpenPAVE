@@ -30,7 +30,7 @@ from pave_runtime.observation import (  # noqa: E402
     ObservationSourceError,
     create_observation_source,
 )
-from pave_runtime.lease import LEASED_ACTIONS  # noqa: E402
+from pave_runtime.lease import LEASED_ACTIONS, LeaseClient  # noqa: E402
 from pave_runtime.seam import dispatch as dispatch_to_adapter  # noqa: E402
 from pave_runtime.shutdown import (  # noqa: E402
     STOP_UNCONFIRMED_EXIT,
@@ -176,19 +176,26 @@ async def run_once(
                 interrupted = False
                 renewals = 0
                 renew_failed = None
+                lease = LeaseClient()
                 try:
                     dispatch_result["state"] = await seam.send(action, params, target=action_target)
+                    lease.begin(action, params, dispatch_result["state"])
                     # The body STOPs itself unless the lease is renewed (BODY_MOTION_TTL_S, default 5 s), so
-                    # a hold longer than that must renew: re-send the same motion every renew interval.
+                    # a hold longer than that must renew: send a `renew` (or, for a pre-v1.8.5 body, re-send
+                    # the motion) every renew interval.
                     remaining = hold
                     while remaining > 0:
                         step = min(max(lease_renew_seconds, 0.05), remaining)
                         await asyncio.sleep(step)
                         remaining -= step
                         if remaining > 0:
-                            renew_state = await seam.send(action, params, target=action_target)
+                            renew_action, renew_params = lease.request()
+                            renew_state = await seam.send(renew_action, renew_params, target=action_target)
                             renewals += 1
-                            if (renew_state or {}).get("status") != "completed":
+                            outcome = lease.interpret(renew_state)
+                            if outcome == LeaseClient.DOWNGRADED:
+                                continue  # the body does not know `renew`: the next one is a legacy re-send
+                            if outcome != LeaseClient.RENEWED:
                                 renew_failed = renew_state  # the body has lost the motion: end the hold
                                 break
                 except asyncio.CancelledError:
@@ -201,6 +208,7 @@ async def run_once(
                 dispatch_result["motion_lease"] = {
                     "hold_seconds": hold,
                     "renewals": renewals,
+                    "renew_mode": lease.mode,
                     "auto_stop": auto_stop_state,
                 }
                 if renew_failed is not None:

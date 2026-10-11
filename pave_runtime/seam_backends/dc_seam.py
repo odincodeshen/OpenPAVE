@@ -15,7 +15,7 @@ import json
 import os
 import types
 
-from pave_runtime.lease import BodyLease, guarded_dispatch
+from pave_runtime.lease import RENEW_ACTION, BodyLease, guarded_dispatch
 
 _SAFETY_CRITICAL = frozenset({"estop", "stop"})
 _SENSING = frozenset({"get_image"})
@@ -59,7 +59,9 @@ class DeviceConnectSeam:
                 super().__init__()
                 self.device_type = dtype
                 self.labels = {"category": cat}
-                for a in sorted(adapter.capabilities):
+                # `renew` is a lease-layer verb (guarded_dispatch answers it; no adapter runs), so it is an
+                # RPC of every body even though it is not one of the adapter's capabilities
+                for a in sorted(set(adapter.capabilities) | {RENEW_ACTION}):
                     self.__dict__[a] = types.MethodType(_make_rpc(a), self)
                 self._invalidate_caches()
 

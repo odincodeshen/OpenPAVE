@@ -342,5 +342,84 @@ class ArgparseTests(unittest.TestCase):
                     parse_args()
 
 
+class _LeasedBodyTransport(FakeSeamTransport):
+    """A transport in front of a REAL BodyLease, so the hold's renewals meet the real protocol."""
+
+    def __init__(self, ttl_s=5.0):
+        super().__init__()
+        from pave_runtime.lease import BodyLease
+        from tests.test_lease import FakeClock, RecordingAdapter
+
+        self.body = RecordingAdapter()
+        self.clock = FakeClock()
+        self.lease = BodyLease(ttl_s=ttl_s, clock=self.clock)
+
+    async def send(self, action, params=None, *, target=None, timeout=5.0):
+        from pave_runtime.lease import guarded_dispatch
+
+        self.sent.append((action, dict(params or {})))
+        return guarded_dispatch(self.body, self.lease, action, params)
+
+
+class HoldRenewalProtocolTests(unittest.TestCase):
+    def test_a_long_hold_renews_with_renew_and_never_re_commands_the_gait(self):
+        fake = _LeasedBodyTransport()
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=0.25, lease_renew_seconds=0.05
+        )
+        self.assertEqual(_actions(fake)[0], "trot")
+        self.assertGreaterEqual(_actions(fake).count("renew"), 3)
+        self.assertEqual(_actions(fake).count("trot"), 1)  # the body was told to trot exactly once
+        self.assertEqual(fake.body.actions(), ["trot", "stop"])
+        self.assertEqual(payload["dispatch"]["motion_lease"]["renew_mode"], "lease_id")
+        self.assertEqual(payload["outcome"]["exit_code"], 0)
+
+    def test_a_lost_lease_ends_the_hold_early_without_restarting_the_motion(self):
+        fake = _LeasedBodyTransport(ttl_s=5.0)
+        real_send = fake.send
+
+        async def send_then_expire(action, params=None, *, target=None, timeout=5.0):
+            if action == "renew" and len([a for a in _actions(fake) if a == "renew"]) == 1:
+                fake.clock.advance(6.0)  # the lease runs out before the second renewal reaches the body
+                fake.lease.expire_if_due(fake.body)
+            return await real_send(action, params, target=target, timeout=timeout)
+
+        fake.send = send_then_expire
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=5.0, lease_renew_seconds=0.05
+        )
+        self.assertEqual(payload["dispatch"]["motion_lease"]["renew_failed"]["status"], "lease_lost")
+        self.assertEqual(fake.body.actions().count("trot"), 1)  # not started a second time
+        self.assertEqual(_actions(fake)[-1], "stop")  # the single-shot still ends with its own STOP
+
+    def test_a_body_without_lease_ids_is_renewed_by_resending_the_motion(self):
+        fake = FakeSeamTransport()  # replies carry no lease_id, like a pre-v1.8.5 body
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=0.25, lease_renew_seconds=0.05
+        )
+        self.assertNotIn("renew", _actions(fake))
+        self.assertGreaterEqual(_actions(fake).count("trot"), 4)
+        self.assertEqual(payload["dispatch"]["motion_lease"]["renew_mode"], "legacy")
+
+    def test_a_body_that_does_not_know_renew_is_downgraded_mid_hold(self):
+        class OldAfterStart(FakeSeamTransport):
+            async def send(self, action, params=None, *, target=None, timeout=5.0):
+                state = await super().send(action, params, target=target, timeout=timeout)
+                if action == "renew":
+                    return {"status": "unsupported", "action": "renew"}
+                if action == "trot":
+                    return {**state, "detail": {"lease_id": "L1"}}
+                return state
+
+        fake = OldAfterStart()
+        payload, _ = _run(
+            fake, mock_output="TROT", allow_motion=True, motion_hold_seconds=0.25, lease_renew_seconds=0.05
+        )
+        self.assertEqual(_actions(fake).count("renew"), 1)
+        self.assertGreaterEqual(_actions(fake).count("trot"), 3)
+        self.assertNotIn("renew_failed", payload["dispatch"]["motion_lease"])
+        self.assertEqual(payload["dispatch"]["motion_lease"]["renew_mode"], "legacy")
+
+
 if __name__ == "__main__":
     unittest.main()

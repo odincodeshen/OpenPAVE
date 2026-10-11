@@ -144,7 +144,7 @@ Current status:
 - `pave_runtime.seam` is a pluggable transport registry (`create_seam_transport`). `raw_zenoh` and `device_connect` are the two backends, exercised on real hardware from DGX Spark and Radxa O6 against a real PuppyPi and an RPi 5 camera (`docs/validation-matrix.md`).
 - `scripts/seam_cli.py` is the body/brain CLI over the selected transport; `scripts/run_inference.py --seam` and `scripts/run_live.py` drive a real body through it (`docs/v1.8-live-body.md`).
 - The seam carries low-rate semantic capability actions (`{action, params}`), not a high-rate control stream: each `raw_zenoh` send currently opens a fresh session (~0.5 s, see `docs/latency-model.md`).
-- The body keeps a **dead-man motion lease** (`BODY_MOTION_TTL_S`, default 5 s): a `trot` / `move` the brain stops renewing is stopped by the body itself, over either backend.
+- The body keeps a **dead-man motion lease** (`BODY_MOTION_TTL_S`, default 5 s): a `trot` / `move` the brain stops renewing is stopped by the body itself, over either backend. Renewal is a separate `renew` request carrying the `lease_id` the motion returned (v1.8.5); it can extend a running lease but never start a motion, so a late renewal after the lease ended is answered `lease_lost` instead of restarting the body.
 
 The transport plugin goal is to make the same body-side adapter and capability dispatch work over different communication backends — and the same brain command drives a ROS 2 body or a ROS-free one.
 

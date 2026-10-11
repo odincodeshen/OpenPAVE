@@ -37,6 +37,7 @@ from pave_runtime.inference import (  # noqa: E402
     create_inference_runtime,
 )
 from pave_runtime.lease import LEASED_ACTIONS as MOTION_ACTIONS  # noqa: E402
+from pave_runtime.lease import LeaseClient  # noqa: E402
 from pave_runtime.observation import ObservationSourceError, create_observation_source  # noqa: E402
 from pave_runtime.seam import create_seam_transport  # noqa: E402
 from pave_runtime.shutdown import (  # noqa: E402
@@ -132,6 +133,19 @@ class MotionGate:
         self.current = self._before
         return True
 
+    def lease_lost(self) -> None:
+        """The body says our lease is gone (it expired and the body stopped, or another motion took over).
+
+        The body is no longer running our motion, so forget it: it has to be confirmed again before it is
+        restarted (``pending``/``count`` are cleared too — a long run of "trot" decisions must not count as
+        a fresh confirmation). No STOP is owed: an expired body stopped itself, and a STOP could cancel
+        someone else's motion.
+        """
+        self.current = "stop"
+        self.pending = None
+        self.count = 0
+        self.uncertain = False
+
     def force_stop(self) -> bool:
         """Watchdog / shutdown: record that the body is stopped. Returns True if it was (or may be) moving."""
         was_moving = self.current in MOTION_ACTIONS or self.uncertain
@@ -170,7 +184,7 @@ async def run_live(
     # could. A renewer task re-sends the active motion on its own cadence, so the lease measures the
     # brain's LIVENESS, not how long one inference happens to take.
     send_lock = asyncio.Lock()       # one seam send at a time: a renewal must never land after a STOP
-    active: dict[str, Any] = {}      # the leased motion the body is running, if any
+    lease = LeaseClient()            # the leased motion the body is running, if any, and how to renew it
     stop_renewer = asyncio.Event()
     renewer: "asyncio.Future | None" = None
     renewal_send: dict[str, "asyncio.Future"] = {}  # the renewal send in flight, if any
@@ -193,11 +207,10 @@ async def run_live(
             except asyncio.TimeoutError:
                 pass
             async with send_lock:
-                if not active or gate.current not in MOTION_ACTIONS:
+                if not lease.active or gate.current not in MOTION_ACTIONS:
                     continue  # the loop already decided to stop (or never started a motion)
-                send_task = asyncio.ensure_future(
-                    seam.send(active["action"], active["params"], target=target)
-                )
+                renew_action, renew_params = lease.request()
+                send_task = asyncio.ensure_future(seam.send(renew_action, renew_params, target=target))
                 renewal_send["task"] = send_task
                 try:
                     await asyncio.wait({send_task})  # cancelling the renewer cancels this wait
@@ -212,7 +225,16 @@ async def run_live(
                     emit({"event": "renew_error", "error": str(send_task.exception())})
                     continue
                 renew_state = send_task.result()
-                if (renew_state or {}).get("status") != "completed":
+                outcome = lease.interpret(renew_state)
+                if outcome == LeaseClient.LOST:
+                    # the body is no longer running our motion (it stopped itself, or something else took
+                    # over): stop renewing, and make the motion earn its confirmations again
+                    emit({"event": "lease_lost", "state": renew_state})
+                    lease.clear()
+                    gate.lease_lost()
+                elif outcome == LeaseClient.DOWNGRADED:
+                    emit({"event": "renew_downgraded", "state": renew_state})
+                elif outcome == LeaseClient.FAILED:
                     emit({"event": "renew_failed", "state": renew_state})
 
     try:
@@ -232,7 +254,7 @@ async def run_live(
             except (asyncio.TimeoutError, ObservationSourceError, InferenceRuntimeError) as exc:
                 # observe/infer stalled or failed — if a motion is active, fail-safe STOP
                 stopped = gate.force_stop()
-                active.clear()
+                lease.clear()
                 stop_state = None
                 if stopped:
                     preempt_renewal()
@@ -262,21 +284,24 @@ async def run_live(
                             state = await seam.send(to_dispatch, normalized["params"], target=target)
                         except Exception as send_exc:  # a transport error is a failed delivery, not a crash
                             state = {"status": "error", "error": str(send_exc), "action": to_dispatch}
-                        active.clear()
+                        lease.clear()
                         status = (state or {}).get("status")
                         if status == "completed":
                             gate.delivered(to_dispatch)
                             delivery = "delivered"
                             # renew only a motion the body actually accepted
                             if to_dispatch in MOTION_ACTIONS:
-                                active.update(action=to_dispatch, params=normalized["params"])
+                                if lease.begin(to_dispatch, normalized["params"], state) == "legacy":
+                                    emit({"event": "lease_legacy_body",
+                                          "note": "body returned no lease_id (older than v1.8.5): renewals "
+                                                  "re-send the motion and cannot detect a lost lease"})
                         elif status in REFUSED_STATUSES:
                             gate.delivered(to_dispatch)  # a definitive no: retrying cannot help
                             delivery = "refused"
                         else:
                             # not delivered (or not clearly): forget it so the next tick sends it again
                             delivery = "retry" if gate.undelivered(to_dispatch) else "abandoned"
-                    if active and renewer is None:
+                    if lease.active and renewer is None:
                         renewer = asyncio.ensure_future(renew_loop())
                 emit({
                     "tick": ticks,
@@ -299,7 +324,7 @@ async def run_live(
             renewer.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await renewer
-        active.clear()
+        lease.clear()
         # always leave the body stopped — and say so loudly if that STOP could not be confirmed
         if gate.force_stop():
             try:

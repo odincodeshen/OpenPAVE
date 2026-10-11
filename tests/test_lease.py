@@ -16,6 +16,7 @@ from control_daemon.adapters import AdapterActionResult
 from pave_runtime.lease import (
     DEFAULT_TTL_S,
     BodyLease,
+    LeaseClient,
     guarded_dispatch,
     safe_stop,
 )
@@ -290,6 +291,205 @@ class SafeStopTests(unittest.TestCase):
         adapter.capabilities = frozenset({"get_image"})  # e.g. a camera
         self.assertIsNone(safe_stop(adapter))
         self.assertEqual(adapter.calls, [])
+
+
+class RenewVerbTests(unittest.TestCase):
+    """v1.8.5: renewal is its own verb. It can extend a running lease and can never start a motion."""
+
+    def setUp(self):
+        self.adapter = RecordingAdapter()
+        self.lease, self.clock = _lease()
+
+    def send(self, action, params=None):
+        return guarded_dispatch(self.adapter, self.lease, action, params)
+
+    def start_trot(self):
+        state = self.send("trot")
+        return state["detail"]["lease_id"]
+
+    def renew(self, lease_id):
+        return self.send("renew", {"lease_id": lease_id})
+
+    def test_starting_a_motion_returns_a_lease_id(self):
+        state = self.send("trot")
+        self.assertIsInstance(state["detail"]["lease_id"], str)
+        self.assertTrue(state["detail"]["lease_id"])
+
+    def test_a_failed_motion_is_guarded_but_gets_no_lease_id(self):
+        adapter = RecordingAdapter(fail={"trot"})
+        state = guarded_dispatch(adapter, self.lease, "trot")
+        self.assertEqual(state["status"], "failed")
+        self.assertNotIn("lease_id", state["detail"])
+        self.assertEqual(self.lease.active_action(), "trot")  # still armed: it may be half-moving
+
+    def test_renew_extends_the_lease_and_never_touches_the_adapter(self):
+        lease_id = self.start_trot()
+        self.clock.advance(4.0)
+        state = self.renew(lease_id)
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["detail"]["lease_id"], lease_id)
+        self.assertEqual(self.adapter.actions(), ["trot"])  # no second gait command
+        self.clock.advance(4.0)  # 8 s after the start, 4 s after the renewal: still inside the TTL
+        self.assertFalse(self.lease.expired())
+
+    def test_renew_keeps_the_same_lease_id(self):
+        lease_id = self.start_trot()
+        self.renew(lease_id)
+        self.assertEqual(self.renew(lease_id)["status"], "completed")
+        self.assertEqual(self.lease.lease_id(), lease_id)
+
+    def test_renew_after_the_lease_expired_is_lease_lost_and_does_not_restart_the_motion(self):
+        lease_id = self.start_trot()
+        self.clock.advance(6.0)
+        self.assertIsNotNone(self.lease.expire_if_due(self.adapter))  # the body stops itself
+        self.assertEqual(self.adapter.actions(), ["trot", "stop"])
+        state = self.renew(lease_id)
+        self.assertEqual(state["status"], "lease_lost")
+        self.assertEqual(state["detail"]["reason"], "expired")
+        self.assertEqual(self.adapter.actions(), ["trot", "stop"])  # THE point: nothing started again
+        self.assertIsNone(self.lease.active_action())
+
+    def test_renew_past_the_deadline_but_before_the_watcher_ran_does_not_resurrect_the_lease(self):
+        lease_id = self.start_trot()
+        self.clock.advance(5.05)  # expired, the watcher has not polled yet
+        state = self.renew(lease_id)
+        self.assertEqual(state["status"], "lease_lost")
+        self.assertEqual(state["detail"]["reason"], "expired")
+        self.assertTrue(self.lease.expired())  # still due: the watcher will STOP the body
+        self.lease.expire_if_due(self.adapter)
+        self.assertEqual(self.adapter.actions(), ["trot", "stop"])
+
+    def test_a_delayed_renewal_arriving_after_a_stop_is_harmless(self):
+        lease_id = self.start_trot()
+        self.send("stop")
+        state = self.renew(lease_id)
+        self.assertEqual(state["status"], "lease_lost")
+        self.assertEqual(state["detail"]["reason"], "stopped")
+        self.assertEqual(self.adapter.actions(), ["trot", "stop"])
+
+    def test_a_renewal_for_an_old_lease_cannot_extend_a_newer_one(self):
+        old = self.start_trot()
+        self.send("stop")
+        new = self.start_trot()
+        self.assertNotEqual(old, new)
+        self.clock.advance(4.0)
+        self.assertEqual(self.renew(old)["status"], "lease_lost")
+        self.clock.advance(2.0)  # 6 s after the new motion started: it must still expire on schedule
+        self.assertTrue(self.lease.expired())
+
+    def test_a_different_motion_supersedes_the_lease(self):
+        first = self.send("trot")["detail"]["lease_id"]
+        self.send("move", {"vx": 1.0})
+        state = self.renew(first)
+        self.assertEqual(state["status"], "lease_lost")
+        self.assertEqual(state["detail"]["reason"], "superseded")
+        self.assertEqual(self.lease.active_action(), "move")  # the newer motion is untouched
+
+    def test_an_unknown_or_missing_lease_id_is_refused_without_side_effects(self):
+        self.start_trot()
+        self.assertEqual(self.renew("not-a-lease")["detail"]["reason"], "unknown")
+        self.assertEqual(self.send("renew", {})["status"], "rejected")
+        self.assertEqual(self.send("renew", None)["status"], "rejected")
+        self.assertEqual(self.send("renew", {"lease_id": 7})["status"], "rejected")
+        self.assertEqual(self.adapter.actions(), ["trot"])
+        self.assertEqual(self.lease.active_action(), "trot")
+
+    def test_a_failed_motion_cannot_be_renewed_by_id(self):
+        adapter = RecordingAdapter(fail={"trot"})
+        guarded_dispatch(adapter, self.lease, "trot")
+        armed_id = self.lease.lease_id()
+        state = guarded_dispatch(adapter, self.lease, "renew", {"lease_id": armed_id})
+        self.assertEqual(state["status"], "lease_lost")
+        self.assertEqual(state["detail"]["reason"], "failed")
+
+    def test_renew_is_not_an_adapter_capability(self):
+        self.assertNotIn("renew", self.adapter.capabilities)
+        self.assertEqual(self.renew("x")["action"], "renew")  # yet the body answers it
+
+    def test_the_action_name_is_normalized(self):
+        lease_id = self.start_trot()
+        self.assertEqual(self.send("  RENEW ", {"lease_id": lease_id})["status"], "completed")
+
+    def test_the_legacy_resend_still_renews_a_running_motion(self):
+        # compatibility with brains older than v1.8.5
+        lease_id = self.start_trot()
+        self.clock.advance(4.0)
+        state = self.send("trot")
+        self.assertTrue(state["detail"]["renewed"])
+        self.assertEqual(state["detail"]["lease_id"], lease_id)
+        self.assertEqual(self.adapter.actions(), ["trot"])
+        self.clock.advance(4.0)
+        self.assertFalse(self.lease.expired())
+
+    def test_the_legacy_resend_after_expiry_still_starts_the_motion_this_is_the_old_weakness(self):
+        # kept for old brains; the reason v1.8.5 brains use `renew` instead
+        self.start_trot()
+        self.clock.advance(6.0)
+        self.lease.expire_if_due(self.adapter)
+        self.send("trot")
+        self.assertEqual(self.adapter.actions(), ["trot", "stop", "trot"])
+
+    def test_the_expiry_event_names_the_lease(self):
+        lease_id = self.start_trot()
+        self.clock.advance(6.0)
+        self.assertEqual(self.lease.expire_if_due(self.adapter)["lease_id"], lease_id)
+
+
+class LeaseClientTests(unittest.TestCase):
+    """The brain half: what to send to keep a motion alive, and what each reply means."""
+
+    def state(self, status="completed", lease_id=None, **extra):
+        detail = {"lease_id": lease_id} if lease_id else {}
+        return {"status": status, "detail": detail, **extra}
+
+    def test_a_body_that_returns_a_lease_id_is_renewed_with_renew(self):
+        c = LeaseClient()
+        self.assertEqual(c.begin("trot", {}, self.state(lease_id="abc")), "lease_id")
+        self.assertEqual(c.request(), ("renew", {"lease_id": "abc"}))
+
+    def test_a_body_without_a_lease_id_is_renewed_by_resending_the_motion(self):
+        c = LeaseClient()
+        self.assertEqual(c.begin("move", {"vx": 1}, self.state()), "legacy")
+        self.assertEqual(c.request(), ("move", {"vx": 1}))
+
+    def test_replies_are_classified(self):
+        c = LeaseClient()
+        c.begin("trot", {}, self.state(lease_id="abc"))
+        self.assertEqual(c.interpret(self.state()), LeaseClient.RENEWED)
+        self.assertEqual(c.interpret(self.state("lease_lost")), LeaseClient.LOST)
+        for bad in (
+            {"status": "no_reply", "error": "timeout"},
+            {"status": "error", "error": "boom"},
+            {"status": "rejected"},
+            {"status": "failed"},
+            None,
+            {},
+        ):
+            self.assertEqual(c.interpret(bad), LeaseClient.FAILED, bad)
+        self.assertEqual(c.request(), ("renew", {"lease_id": "abc"}))  # a failure keeps the lease id
+
+    def test_an_old_body_answering_renew_unsupported_downgrades_to_the_legacy_resend(self):
+        c = LeaseClient()
+        c.begin("trot", {}, self.state(lease_id="abc"))
+        self.assertEqual(c.interpret({"status": "unsupported"}), LeaseClient.DOWNGRADED)
+        self.assertEqual(c.mode, "legacy")
+        self.assertEqual(c.request(), ("trot", {}))
+        # in legacy mode `unsupported` is just a failure (the motion itself is unsupported)
+        self.assertEqual(c.interpret({"status": "unsupported"}), LeaseClient.FAILED)
+
+    def test_clear_forgets_the_motion(self):
+        c = LeaseClient()
+        c.begin("trot", {}, self.state(lease_id="abc"))
+        c.clear()
+        self.assertFalse(c.active)
+        with self.assertRaises(RuntimeError):
+            c.request()
+
+    def test_a_non_string_lease_id_is_ignored(self):
+        c = LeaseClient()
+        self.assertEqual(c.begin("trot", {}, {"status": "completed", "detail": {"lease_id": 5}}), "legacy")
+        self.assertEqual(c.begin("trot", {}, {"status": "completed", "detail": None}), "legacy")
+        self.assertEqual(c.begin("trot", {}, None), "legacy")
 
 
 if __name__ == "__main__":
