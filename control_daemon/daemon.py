@@ -164,7 +164,7 @@ def main():
     last_mtime = None if PROCESS_EXISTING_INTENT_ON_START else get_mtime(INTENT_PATH)
     if last_mtime is not None:
         print(f"[daemon] ignoring existing intent file until it changes: {INTENT_PATH}")
-    last_action_key = None  # de-dupe repeated identical actions
+    last_completed_request_key = None
 
     while True:
         mtime = get_mtime(INTENT_PATH)
@@ -196,12 +196,10 @@ def main():
                 time.sleep(POLL_SEC)
                 continue
 
-            # Optional: simple per-action de-dupe (prevents repeated identical write spam)
-            action_key = intent_action_key(normalized)
-            if action_key == last_action_key:
+            request_key = (normalized["request_id"], intent_action_key(normalized))
+            if normalized["intent"] != "STOP" and request_key == last_completed_request_key:
                 time.sleep(POLL_SEC)
                 continue
-            last_action_key = action_key
 
             received = command_result(
                 intent=normalized,
@@ -217,7 +215,10 @@ def main():
             )
             write_command_feedback(accepted)
             write_robot_state("accepted", adapter.name, accepted)
-            execute_intent(normalized, adapter)
+            result = execute_intent(normalized, adapter)
+            last_completed_request_key = (
+                request_key if result["status"] == "completed" else None
+            )
 
         time.sleep(POLL_SEC)
 
