@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -18,10 +19,25 @@ def get_intent_path():
 
 def atomic_write(obj: dict):
     intent_path = get_intent_path()
-    tmp = intent_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False)
-    os.replace(tmp, intent_path)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=os.path.dirname(os.path.abspath(intent_path)),
+            prefix=os.path.basename(intent_path) + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = temporary_file.name
+            json.dump(obj, temporary_file, ensure_ascii=False)
+        os.replace(temporary_path, intent_path)
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 @app.post("/intent")
 def intent():
