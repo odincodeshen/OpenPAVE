@@ -6,7 +6,9 @@ Local-only: threads, fake adapters and a socketpair; no hardware, no network.
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
+import subprocess
 import threading
 import time
 import unittest
@@ -84,6 +86,62 @@ class StopNotBlockedByHungMotionTests(unittest.TestCase):
         self.lease.exec_lock.release()
 
 
+class LateMotionAfterStopTests(unittest.TestCase):
+    """A stop that skips the lock must not be undone by the motion call it raced."""
+
+    def _start_hung_trot(self):
+        adapter = HangableAdapter()
+        lease = BodyLease(ttl_s=5.0)
+        result: dict = {}
+
+        def run():
+            result["state"] = guarded_dispatch(adapter, lease, "trot", {})
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        self.assertTrue(adapter.in_trot.wait(2))
+        return adapter, lease, result, t
+
+    def test_trot_finishing_after_estop_gets_no_lease_and_is_stopped_again(self):
+        adapter, lease, result, t = self._start_hung_trot()
+        guarded_dispatch(adapter, lease, "estop", {})
+        adapter.release.set()
+        t.join(3)
+        state = result["state"]
+        self.assertNotEqual(state["status"], "completed")
+        self.assertNotIn("lease_id", state.get("detail") or {})
+        self.assertIsNone(lease.active_action(), "a late trot armed a lease after the estop")
+        self.assertGreaterEqual(adapter.calls.count("stop"), 1, "the late trot was not stopped again")
+        self.assertEqual(lease.renew("anything"), (False, "unknown"))
+
+    def test_stop_does_not_delete_a_lease_armed_after_it_began(self):
+        lease = BodyLease(ttl_s=5.0)
+        captured = lease.begin_stop()  # a stop starts with nothing armed ...
+        new_id = lease.arm("trot", {})  # ... and a motion arms meanwhile
+        lease.disarm_if(captured)
+        self.assertEqual(lease.lease_id(), new_id)
+
+    def test_stop_disarms_the_lease_it_was_stopping(self):
+        adapter = HangableAdapter()
+        lease = BodyLease(ttl_s=5.0)
+        adapter.release.set()
+        guarded_dispatch(adapter, lease, "trot", {})
+        self.assertEqual(lease.active_action(), "trot")
+        guarded_dispatch(adapter, lease, "stop", {})
+        self.assertIsNone(lease.active_action())
+
+    def test_expiry_stop_also_preempts_a_motion_in_flight(self):
+        adapter, lease, result, t = self._start_hung_trot()
+        lease.arm("trot", {})
+        lease._deadline = 0.0
+        with mock.patch.object(lease_module, "STOP_LOCK_WAIT_S", 0.1):
+            lease.expire_if_due(adapter)
+        adapter.release.set()
+        t.join(3)
+        self.assertNotEqual(result["state"]["status"], "completed")
+        self.assertIsNone(lease.active_action())
+
+
 class CommandTimeoutTests(unittest.TestCase):
     def test_runner_returns_timeout_rc_instead_of_hanging(self):
         with mock.patch.dict("os.environ", {"OPENPAVE_CMD_TIMEOUT_S": "0.3"}):
@@ -96,6 +154,14 @@ class CommandTimeoutTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"OPENPAVE_CMD_TIMEOUT_S": "0.3"}):
             rc, out = default_capture_runner("sleep 5", "")
         self.assertEqual((rc, out), (adapters_module.TIMEOUT_RC, ""))
+
+    def test_timeout_kills_the_whole_process_group(self):
+        marker = f"sleep 4.{os.getpid()}"  # unique per run, so pgrep cannot match an unrelated command line
+        with mock.patch.dict("os.environ", {"OPENPAVE_CMD_TIMEOUT_S": "0.3"}):
+            default_runner(f"sh -c '{marker}; true'")
+        time.sleep(0.3)
+        left = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(left, "", f"orphaned child still running: {left}")
 
     def test_bad_timeout_setting_falls_back_to_a_finite_default(self):
         for raw in ("inf", "nan", "-1", "0", "abc"):

@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -155,22 +156,37 @@ def _cmd_timeout_s() -> float:
     return value if 0 < value < float("inf") else 60.0
 
 
-def default_runner(cmd: str) -> int:
+def _run_bounded(cmd: str, stdin_text: str | None = None, capture: bool = False) -> "tuple[int, str]":
+    """Run a shell command with a hard ceiling; on timeout kill its whole process group, not just the shell."""
+    limit = _cmd_timeout_s()
+    proc = subprocess.Popen(
+        cmd, shell=True, start_new_session=True, text=True,
+        stdin=subprocess.PIPE if stdin_text is not None else None,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
     try:
-        return subprocess.run(cmd, shell=True, timeout=_cmd_timeout_s()).returncode
+        out, _ = proc.communicate(stdin_text, timeout=limit)
+        return proc.returncode, out or ""
     except subprocess.TimeoutExpired:
-        print(f"[{now_iso()}] command timed out after {_cmd_timeout_s():g}s: {cmd[:120]}")
-        return TIMEOUT_RC
+        print(f"[{now_iso()}] command timed out after {limit:g}s: {cmd[:120]}")
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        try:
+            proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        return TIMEOUT_RC, ""
+
+
+def default_runner(cmd: str) -> int:
+    return _run_bounded(cmd)[0]
 
 
 def default_capture_runner(cmd: str, stdin_text: str) -> "tuple[int, str]":
-    try:
-        proc = subprocess.run(cmd, shell=True, input=stdin_text, capture_output=True, text=True,
-                              timeout=_cmd_timeout_s())
-    except subprocess.TimeoutExpired:
-        print(f"[{now_iso()}] command timed out after {_cmd_timeout_s():g}s: {cmd[:120]}")
-        return TIMEOUT_RC, ""
-    return proc.returncode, proc.stdout
+    return _run_bounded(cmd, stdin_text, capture=True)
 
 
 class PuppyPiAdapter(LocomotionCapabilityMixin):

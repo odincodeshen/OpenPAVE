@@ -49,7 +49,8 @@ class DeviceConnectSeam:
 
         def _make_rpc(action: str):
             async def method(self, params: dict | None = None) -> dict:
-                return guarded_dispatch(adapter, lease, action, params)
+                # off the event loop: a hung motion call must not freeze the watcher or the stop RPCs
+                return await asyncio.to_thread(guarded_dispatch, adapter, lease, action, params)
             method.__name__ = action
             method.__doc__ = f"Run the '{action}' capability.\n\nArgs:\n    params: capability params dict."
             return rpc(name=action, labels=_function_labels(action))(method)

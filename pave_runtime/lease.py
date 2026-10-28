@@ -113,6 +113,8 @@ class BodyLease:
         # repeat of the same motion must run again instead of being taken for a renewal.
         self._ok = True
         self._lease_id: str | None = None
+        # bumped by every stop: a motion that was in flight while a stop ran must not arm a lease afterwards
+        self._stop_epoch = 0
         # why the most recent lease ended, so a late renewal can be told the truth (log value only)
         self._ended: tuple[str, str] | None = None
 
@@ -147,6 +149,22 @@ class BodyLease:
     def lease_id(self) -> str | None:
         with self._state_lock:
             return self._lease_id
+
+    def stop_epoch(self) -> int:
+        with self._state_lock:
+            return self._stop_epoch
+
+    def begin_stop(self) -> str | None:
+        """A stop is starting: bump the epoch and return the id of the lease it is stopping (None if none)."""
+        with self._state_lock:
+            self._stop_epoch += 1
+            return self._lease_id
+
+    def disarm_if(self, lease_id: str | None, reason: str = "stopped") -> None:
+        """Disarm only the lease a stop captured on entry; a lease armed since then belongs to a newer motion."""
+        with self._state_lock:
+            if self._lease_id == lease_id:
+                self.disarm(reason)
 
     def renew(self, lease_id: str) -> tuple[bool, str]:
         """Extend the lease ``lease_id`` if — and only if — it is the running, healthy, unexpired one.
@@ -191,6 +209,7 @@ class BodyLease:
                 return None
             with self._state_lock:
                 action, params, lease_id = self._action, self._params, self._lease_id
+            self.begin_stop()  # a motion call still in flight must not re-arm after this STOP
             self.disarm("expired")
             try:
                 state = dispatch(adapter, "stop", {})
@@ -255,7 +274,19 @@ def guarded_dispatch(adapter, lease: BodyLease, action: str, params: dict | None
                     "detail": {"renewed": True, "lease_id": lease.lease_id(), "lease_ttl_s": lease.ttl_s},
                     "error": None,
                 }
+            epoch = lease.stop_epoch()
             state = dispatch(adapter, action, params)
+            if lease.stop_epoch() != epoch:
+                # a stop ran while this motion call was in flight (it skipped the lock on purpose). The
+                # motion's late effect must not outlive that stop: stop again, hand out no lease.
+                try:
+                    again = dispatch(adapter, "stop", {})
+                except Exception as exc:  # noqa: BLE001
+                    again = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                if again.get("status") != "completed":
+                    lease.arm(name, params, ttl_s=RETRY_TTL_S, ok=False)  # unsure the body is stopped: guard it
+                return {**state, "status": "failed", "error": "preempted by a stop while in flight",
+                        "detail": {"preempted": True}}
             if state.get("status") in ("completed", "failed"):
                 # arm even on `failed`: a half-started gait may be moving, and the lease will STOP it. Only a
                 # completed motion is healthy; a repeat of a failed one runs again rather than "renewing" it.
@@ -266,9 +297,12 @@ def guarded_dispatch(adapter, lease: BodyLease, action: str, params: dict | None
                     detail["lease_id"] = lease_id  # the handle the brain renews with; not for a failed start
                 state = {**state, "detail": detail}
             return state
+        captured = lease.begin_stop() if name in RELEASING_ACTIONS else None
         state = dispatch(adapter, action, params)
         if name in RELEASING_ACTIONS and state.get("status") == "completed":
-            lease.disarm("stopped")  # only once the STOP really completed; a failed STOP stays protected
+            # only once the STOP really completed (a failed STOP stays protected), and only the lease that was
+            # running when it began: a newer motion's lease is not this stop's to delete
+            lease.disarm_if(captured, "stopped")
         return state
 
 
