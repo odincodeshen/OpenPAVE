@@ -164,7 +164,10 @@ class BodyLease:
             with self._state_lock:
                 action, params, lease_id = self._action, self._params, self._lease_id
             self.disarm("expired")
-            state = dispatch(adapter, "stop", {})
+            try:
+                state = dispatch(adapter, "stop", {})
+            except Exception as exc:  # whatever went wrong, the body may still be moving: keep guarding it
+                state = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
             if state.get("status") != "completed":
                 # the body may still be moving: keep protecting it and retry the STOP shortly
                 self.arm(action or "", params, ttl_s=RETRY_TTL_S, ok=False)  # state unknown: a repeat re-runs
@@ -181,7 +184,10 @@ class BodyLease:
                     print(f"lease watcher: expiry STOP raised {type(exc).__name__}: {exc}; retrying")
                     continue
                 if event is not None and emit is not None:
-                    emit(event)
+                    try:
+                        emit(event)
+                    except Exception as exc:  # a broken reporter must not take the dead-man switch down
+                        print(f"lease watcher: emit raised {type(exc).__name__}: {exc}")
 
 
 def _renew_state(lease: BodyLease, params: dict | None) -> dict:

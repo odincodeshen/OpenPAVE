@@ -134,6 +134,77 @@ class B1WatchSurvivesTests(unittest.TestCase):
         self.assertIsNone(lease.active_action())
 
 
+class _MalformedStopAdapter(RaisingStopAdapter):
+    """``stop`` returns None (not an AdapterActionResult) the first ``bad`` times, then succeeds."""
+
+    def __init__(self, bad: int = 1) -> None:
+        super().__init__(stop_raises=0)
+        self.bad = bad
+
+    def execute(self, action, params):
+        if action == "stop" and self.bad > 0:
+            self.bad -= 1
+            return None
+        return super().execute(action, params)
+
+
+class B1ResidualHolesTests(unittest.TestCase):
+    """Holes found when the first B1 fix was re-reviewed."""
+
+    def test_malformed_stop_result_is_a_failed_state_not_an_exception(self):
+        state = dispatch(_MalformedStopAdapter(), "stop", {})
+        self.assertEqual(state["status"], "failed")
+
+    def test_malformed_stop_result_at_expiry_keeps_the_lease_armed(self):
+        clock = FakeClock()
+        adapter = _MalformedStopAdapter(bad=1)
+        lease = BodyLease(ttl_s=5.0, clock=clock)
+        guarded_dispatch(adapter, lease, "trot")
+        clock.advance(5.0)
+        lease.expire_if_due(adapter)
+        self.assertIsNotNone(lease.active_action(), "lease released although STOP never completed")
+        clock.advance(RETRY_TTL_S)
+        lease.expire_if_due(adapter)
+        self.assertIsNone(lease.active_action())
+
+    def test_expire_if_due_survives_dispatch_raising(self):
+        clock = FakeClock()
+        adapter = RaisingStopAdapter(stop_raises=0)
+        lease = BodyLease(ttl_s=5.0, clock=clock)
+        guarded_dispatch(adapter, lease, "trot")
+        clock.advance(5.0)
+        with mock.patch.object(lease_module, "dispatch", side_effect=RuntimeError("boom")):
+            lease.expire_if_due(adapter)  # must not raise
+        self.assertIsNotNone(lease.active_action(), "lease released although the STOP blew up")
+
+    def test_watch_survives_a_raising_emit(self):
+        adapter = RaisingStopAdapter(stop_raises=0)
+        lease = BodyLease(ttl_s=0.1)
+        result: dict = {}
+
+        def bad_emit(_event):
+            raise TypeError("not serializable")
+
+        async def scenario():
+            guarded_dispatch(adapter, lease, "trot")
+            watcher = asyncio.ensure_future(lease.watch(adapter, poll_s=0.02, emit=bad_emit))
+            await asyncio.sleep(0.4)
+            result["done"] = watcher.done()
+            guarded_dispatch(adapter, lease, "trot")  # a new motion after the failed emit
+            await asyncio.sleep(0.4)
+            result["still_alive"] = not watcher.done()
+            watcher.cancel()
+            try:
+                await watcher
+            except BaseException:  # noqa: BLE001
+                pass
+
+        asyncio.run(scenario())
+        self.assertFalse(result["done"], "watcher died when emit raised")
+        self.assertTrue(result["still_alive"])
+        self.assertIsNone(lease.active_action(), "second motion was never stopped")
+
+
 class _MoveRecorder:
     name = "move-recorder"
     capabilities = frozenset({"stop", "trot", "move"})

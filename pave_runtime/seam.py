@@ -75,11 +75,11 @@ def dispatch(adapter, action: str, params: dict | None = None) -> dict:
             return {**base, "status": "rejected", "error": str(exc)}
     try:
         result = adapter.execute(name, norm["params"])
-    except Exception as exc:  # an adapter fault must become a state, never escape and kill the caller
+        return {**base, "status": "completed" if result.success else "failed",
+                "detail": result.detail, "error": result.error}
+    except Exception as exc:  # an adapter fault (or a malformed result) becomes a state, never escapes
         return {**base, "status": "failed", "detail": None,
                 "error": f"{type(exc).__name__}: {exc}"}
-    return {**base, "status": "completed" if result.success else "failed",
-            "detail": result.detail, "error": result.error}
 
 
 # --- pluggable transport interface ------------------------------------------------------------
