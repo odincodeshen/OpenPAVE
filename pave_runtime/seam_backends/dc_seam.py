@@ -15,7 +15,7 @@ import json
 import os
 import types
 
-from pave_runtime.lease import RENEW_ACTION, BodyLease, guarded_dispatch
+from pave_runtime.lease import RENEW_ACTION, BodyLease, check_watcher, guarded_dispatch
 
 _SAFETY_CRITICAL = frozenset({"estop", "stop"})
 _SENSING = frozenset({"get_image"})
@@ -86,10 +86,14 @@ class DeviceConnectSeam:
         watcher = asyncio.ensure_future(
             lease.watch(adapter, emit=lambda e: print("[seam:lease]", json.dumps(e, ensure_ascii=False), flush=True))
         )
+        runtime = asyncio.ensure_future(DeviceRuntime(driver=driver, device_id=device_id).run())
         try:
-            await DeviceRuntime(driver=driver, device_id=device_id).run()
+            await asyncio.wait({runtime, watcher}, return_when=asyncio.FIRST_COMPLETED)
+            check_watcher(watcher)  # watcher gone -> stop serving (the caller then STOPs the body)
+            await runtime  # the runtime ended by itself: surface its result / error
         finally:
             watcher.cancel()
+            runtime.cancel()
 
     async def send(self, action: str, params: dict | None = None,
                    *, target: str | None = None, timeout: float = 5.0) -> dict:

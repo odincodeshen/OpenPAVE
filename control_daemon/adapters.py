@@ -143,12 +143,33 @@ class RosCliConfig:
         )
 
 
+TIMEOUT_RC = 124  # same code coreutils `timeout` uses; reads as a failed command to every caller
+
+
+def _cmd_timeout_s() -> float:
+    """Hard ceiling for any one shell command: a hung docker/ROS call must not hold the body forever."""
+    try:
+        value = float(os.environ.get("OPENPAVE_CMD_TIMEOUT_S", "60"))
+    except ValueError:
+        return 60.0
+    return value if 0 < value < float("inf") else 60.0
+
+
 def default_runner(cmd: str) -> int:
-    return subprocess.run(cmd, shell=True).returncode
+    try:
+        return subprocess.run(cmd, shell=True, timeout=_cmd_timeout_s()).returncode
+    except subprocess.TimeoutExpired:
+        print(f"[{now_iso()}] command timed out after {_cmd_timeout_s():g}s: {cmd[:120]}")
+        return TIMEOUT_RC
 
 
 def default_capture_runner(cmd: str, stdin_text: str) -> "tuple[int, str]":
-    proc = subprocess.run(cmd, shell=True, input=stdin_text, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, shell=True, input=stdin_text, capture_output=True, text=True,
+                              timeout=_cmd_timeout_s())
+    except subprocess.TimeoutExpired:
+        print(f"[{now_iso()}] command timed out after {_cmd_timeout_s():g}s: {cmd[:120]}")
+        return TIMEOUT_RC, ""
     return proc.returncode, proc.stdout
 
 

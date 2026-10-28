@@ -15,7 +15,7 @@ import time
 
 import zenoh  # lazy: only imported when the raw_zenoh backend is selected
 
-from pave_runtime.lease import BodyLease, guarded_dispatch
+from pave_runtime.lease import BodyLease, check_watcher, guarded_dispatch
 
 ACTION_KEY = "openpave/action"        # down: {action, params}
 STATE_KEY = "openpave/action_state"   # up: state dict
@@ -62,6 +62,7 @@ class ZenohSeam:
         try:
             while True:
                 await asyncio.sleep(1)
+                check_watcher(watcher)  # no dead-man switch -> stop serving (the caller then STOPs the body)
         finally:
             watcher.cancel()
             session.close()

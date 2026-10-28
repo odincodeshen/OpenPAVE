@@ -28,6 +28,7 @@ enforcement in the controller/bridge below the body process.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import threading
 import time
@@ -52,6 +53,33 @@ LEASE_LOST = "lease_lost"  # state status: the lease named by a renewal is not r
 
 DEFAULT_TTL_S = 5.0
 RETRY_TTL_S = 1.0  # if the lease-expiry STOP fails, try again this soon
+
+# A stop must never queue forever behind a hung motion call that holds ``exec_lock``. A plain ``stop`` (and the
+# expiry STOP) waits this long for the lock, then goes ahead anyway; an ``estop`` does not wait at all.
+STOP_LOCK_WAIT_S = 1.0
+ESTOP_LOCK_WAIT_S = 0.0
+
+
+@contextlib.contextmanager
+def _lock_for_stop(lock, wait_s: float):
+    """Take ``lock`` for at most ``wait_s``, then run the body of the ``with`` regardless.
+
+    Serializing a stop with the motion verb is nice, but a stop that cannot run because a motion call is
+    hung defeats the whole safety layer. The lock is released only if it was actually taken.
+    """
+    got = lock.acquire(timeout=wait_s) if wait_s > 0 else lock.acquire(blocking=False)
+    try:
+        yield got
+    finally:
+        if got:
+            lock.release()
+
+
+def check_watcher(watcher) -> None:
+    """Raise if the lease watcher task has ended: the body would otherwise keep serving with no dead-man switch."""
+    if watcher.done():
+        exc = None if watcher.cancelled() else watcher.exception()
+        raise RuntimeError(f"lease watcher stopped unexpectedly ({exc!r}); refusing to serve without a dead-man switch")
 
 
 def _ttl_from_env() -> float:
@@ -158,7 +186,7 @@ class BodyLease:
     # --- expiry ------------------------------------------------------------------------------
     def expire_if_due(self, adapter) -> dict | None:
         """If the lease ran out, STOP the body now. Returns an event dict, or None if nothing was due."""
-        with self.exec_lock:
+        with _lock_for_stop(self.exec_lock, STOP_LOCK_WAIT_S):
             if not self.expired():  # re-check under the lock: a renewal may have just landed
                 return None
             with self._state_lock:
@@ -207,7 +235,11 @@ def _renew_state(lease: BodyLease, params: dict | None) -> dict:
 def guarded_dispatch(adapter, lease: BodyLease, action: str, params: dict | None = None) -> dict:
     """``dispatch`` plus the motion lease — the single body entry point for every seam backend."""
     name = _action_name(action)
-    with lease.exec_lock:
+    if name in RELEASING_ACTIONS:
+        guard = _lock_for_stop(lease.exec_lock, ESTOP_LOCK_WAIT_S if name == "estop" else STOP_LOCK_WAIT_S)
+    else:
+        guard = lease.exec_lock
+    with guard:
         if name == RENEW_ACTION:
             return _renew_state(lease, params)  # a lease-layer verb: extends a lease, can never start a motion
         if name in LEASED_ACTIONS:

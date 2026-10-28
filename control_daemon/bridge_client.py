@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from typing import Any
 
 PROTOCOL_VERSION = "0.1"
@@ -87,8 +88,13 @@ class BridgeClient:
     # ---- exchange ----
     def _await(self, req_id: str, want: str, timeout: float) -> dict:
         sock = self._connect()
-        sock.settimeout(timeout)
+        deadline = time.monotonic() + timeout  # one overall bound: other messages must not restart the wait
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._reset()
+                raise ConnectionError(f"bridge reply timed out after {timeout:g}s")
+            sock.settimeout(remaining)
             try:
                 data = sock.recv(65536)
             except (socket.timeout, OSError) as exc:
