@@ -175,7 +175,11 @@ class BodyLease:
         while True:
             await asyncio.sleep(poll_s)
             if self.expired():
-                event = await asyncio.to_thread(self.expire_if_due, adapter)
+                try:
+                    event = await asyncio.to_thread(self.expire_if_due, adapter)
+                except Exception as exc:  # the dead-man watcher must outlive any single failure
+                    print(f"lease watcher: expiry STOP raised {type(exc).__name__}: {exc}; retrying")
+                    continue
                 if event is not None and emit is not None:
                     emit(event)
 

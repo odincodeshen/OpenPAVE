@@ -27,12 +27,28 @@ from pave_runtime.capability_schema import (
     normalize_action_payload,
     now_iso,
 )
+from pave_runtime.intent_schema import (
+    VX_MAX,
+    VX_MIN,
+    YAW_MAX,
+    YAW_MIN,
+    IntentValidationError,
+    _as_float,
+    _range,
+)
 
 if TYPE_CHECKING:
     from control_daemon.adapters import CapabilityAdapter
 
 
 # --- body-endpoint contract (single source, shared by every transport) ------------------------
+
+def _check_move_params(params: dict) -> None:
+    """Body-side bounds for `move`: finite numbers inside the intent limits. Raises IntentValidationError."""
+    for key, lower, upper in (("vx", VX_MIN, VX_MAX), ("yaw", YAW_MIN, YAW_MAX)):
+        if key in params:
+            _range(_as_float(params[key], f"params.{key}"), f"params.{key}", lower, upper)
+
 
 def dispatch(adapter, action: str, params: dict | None = None) -> dict:
     """Body endpoint — transport-agnostic. An `(action, params)` in, a capability state dict out.
@@ -52,7 +68,16 @@ def dispatch(adapter, action: str, params: dict | None = None) -> dict:
     if name not in adapter.capabilities:
         return {**base, "status": "unsupported",
                 "error": f"{adapter.name} does not support '{name}'"}
-    result = adapter.execute(name, norm["params"])
+    if name == "move":
+        try:
+            _check_move_params(norm["params"])
+        except IntentValidationError as exc:
+            return {**base, "status": "rejected", "error": str(exc)}
+    try:
+        result = adapter.execute(name, norm["params"])
+    except Exception as exc:  # an adapter fault must become a state, never escape and kill the caller
+        return {**base, "status": "failed", "detail": None,
+                "error": f"{type(exc).__name__}: {exc}"}
     return {**base, "status": "completed" if result.success else "failed",
             "detail": result.detail, "error": result.error}
 

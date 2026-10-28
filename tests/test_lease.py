@@ -89,7 +89,7 @@ class GuardedDispatchTests(unittest.TestCase):
 
     def test_changed_params_are_a_new_motion_not_a_renewal(self):
         self.send("move", {"vx": 0.1})
-        self.send("move", {"vx": 0.9})
+        self.send("move", {"vx": 0.4})
         self.assertEqual(self.adapter.actions(), ["move", "move"])
 
     def test_a_different_motion_replaces_the_lease(self):
@@ -379,7 +379,7 @@ class RenewVerbTests(unittest.TestCase):
 
     def test_a_different_motion_supersedes_the_lease(self):
         first = self.send("trot")["detail"]["lease_id"]
-        self.send("move", {"vx": 1.0})
+        self.send("move", {"vx": 0.5})
         state = self.renew(first)
         self.assertEqual(state["status"], "lease_lost")
         self.assertEqual(state["detail"]["reason"], "superseded")
