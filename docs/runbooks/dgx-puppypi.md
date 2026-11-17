@@ -12,18 +12,39 @@ Self-contained for a first-time developer. Config: [`configs/dgx-puppypi.env`](.
 
 ## Prerequisites
 
-- SSH (key-based) to the DGX and the PuppyPi.
-- The PuppyPi carries the full repo at `~/OpenPAVE` with the `.venv-dc` venv (zenoh +
-  device-connect-edge); a body serves a real adapter and needs `control_daemon/`.
-- The DGX has a venv (`~/.venv-zenoh`) for the brain.
+- Key-based SSH to both devices, `rsync`, and Python 3.10 or later with venv support
+  (`python3-venv` on Debian/Ubuntu).
+- A full current OpenPAVE checkout on your workstation. Use this **same source version**
+  for the DGX brain bundle and the full PuppyPi copy, including any local uncommitted
+  changes. The raw Zenoh client requires the updated body to echo correlation IDs;
+  the current body also provides the motion lease described below.
+- Replace `<DGX_USER>`, `<DGX_IP>`, `<PUPPYPI_USER>` and `<PUPPYPI_IP>` in the commands
+  with your SSH accounts and device addresses. Before copying or deploying, edit
+  `BRAIN_HOST` and `BODY_HOST` in `configs/dgx-puppypi.env` to use those addresses.
+
+From the workstation's repository root, copy the full source to the PuppyPi (the
+real adapter needs `control_daemon/`; create the device's venv separately):
+
+```bash
+rsync -az --exclude='.venv*/' --exclude='venv/' --exclude='__pycache__/' --exclude='benchmark-results/' \
+  ./ '<PUPPYPI_USER>@<PUPPYPI_IP>:~/OpenPAVE/'
+```
 
 ## 1. Install dependencies
 
+On the **DGX**, create the brain environment; step 2 installs its dependencies
+from the deployed bundle:
+
 ```bash
-# DGX brain
-~/.venv-zenoh/bin/pip install -r requirements-seam.txt
-# PuppyPi body (already present on the validated unit; run if missing)
-~/.venv-dc/bin/pip install -r requirements-seam.txt
+python3 -m venv "$HOME/.venv-zenoh"
+```
+
+On the **PuppyPi**, install the seam dependencies from the full source copy:
+
+```bash
+cd ~/OpenPAVE
+python3 -m venv "$HOME/.venv-dc"
+"$HOME/.venv-dc/bin/python" -m pip install -r requirements-seam.txt
 ```
 
 ## 2. Deploy the seam bundle to the DGX brain
@@ -31,7 +52,7 @@ Self-contained for a first-time developer. Config: [`configs/dgx-puppypi.env`](.
 From a full checkout on your workstation:
 
 ```bash
-scripts/deploy_seam.sh odin@192.168.0.24 '$HOME/openpave-seam' '$HOME/.venv-zenoh/bin/python'
+scripts/deploy_seam.sh '<DGX_USER>@<DGX_IP>' '$HOME/openpave-seam' '$HOME/.venv-zenoh/bin/python'
 ```
 
 This installs `~/openpave-seam` on the DGX (pave_runtime + seam_cli + seam_run + configs). The brain
@@ -39,17 +60,11 @@ needs no `control_daemon`.
 
 ## 3. Bring up the PuppyPi body
 
-On the **PuppyPi** (`ssh pi@192.168.0.6`), first make sure the repo is a **clean checkout of this
-release** (a stale branch will be missing `seam_run.sh` and the seam configs):
+On the **PuppyPi** (`ssh '<PUPPYPI_USER>@<PUPPYPI_IP>'`), use the current full source
+copy from the prerequisites, matching the DGX bundle. From `~/OpenPAVE`:
 
 ```bash
-git clone https://github.com/odincodeshen/OpenPAVE.git ~/OpenPAVE   # first time only
-cd ~/OpenPAVE && git fetch --tags && git checkout v1.5.0-seam
-```
-
-Then, from `~/OpenPAVE`:
-
-```bash
+cd ~/OpenPAVE
 # if a previous bridge is still running, free the port first: docker stop puppypi_ros2
 bash scripts/switch_puppypi_ros2.sh                       # ROS 2 puppy_control + bridge (dog stands)
 scripts/seam_run.sh configs/dgx-puppypi.env body          # serve puppypi_bridge over the seam
@@ -61,7 +76,7 @@ listens on `:7447`.
 
 ## 4. Drive it from the DGX brain
 
-On the **DGX** (`ssh odin@192.168.0.24`), from `~/openpave-seam`:
+On the **DGX** (`ssh '<DGX_USER>@<DGX_IP>'`), from `~/openpave-seam`:
 
 ```bash
 scripts/seam_run.sh configs/dgx-puppypi.env brain send home
@@ -98,7 +113,7 @@ the outcome in [`docs/validation-matrix.md`](../validation-matrix.md).
 ## Cleanup
 
 ```bash
-ssh pi@192.168.0.6 'pkill -f "seam_cli.py serve"; docker stop puppypi_ros2'   # stop body, rest the dog
+ssh '<PUPPYPI_USER>@<PUPPYPI_IP>' 'pkill -f "seam_cli.py serve"; docker stop puppypi_ros2'   # stop body, rest the dog
 ```
 
 ## Troubleshooting
@@ -106,5 +121,5 @@ ssh pi@192.168.0.6 'pkill -f "seam_cli.py serve"; docker stop puppypi_ros2'   # 
 - `raw_zenoh` `send` occasionally returns `no_reply`/timeout (per-call discovery settle) — re-send.
 - `device_connect` finds no device: ensure brain and body are on the same LAN and
   `DEVICE_CONNECT_ALLOW_INSECURE=true` (the launcher sets it).
-- Bridge times out though services show in discovery: run the bridge as the controller's user
-  (`-u ubuntu`); handled by `switch_puppypi_ros2.sh`.
+- Bridge times out though services show in discovery: the bridge must run as the controller's
+  user. Check the controller account used by `switch_puppypi_ros2.sh` for your installation.

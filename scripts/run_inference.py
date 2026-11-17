@@ -290,7 +290,8 @@ def parse_args() -> argparse.Namespace:
         metavar="ID",
         help="which body to send the action to over --seam (default: env ACTION_TARGET). For "
         "device_connect this is the body's DEVICE_ID; required when more than one body is online. "
-        "raw_zenoh is point-to-point (addressed by ZENOH_CONNECT) and ignores this.",
+        "raw_zenoh optionally accepts the body-instance ID returned by lease_status; "
+        "omit it to send without body-instance targeting.",
     )
     parser.add_argument(
         "--allow-motion",

@@ -32,6 +32,7 @@ import os
 import threading
 import time
 import uuid
+from collections import deque
 from typing import Any, Callable
 
 from pave_runtime.capability_schema import now_iso
@@ -87,6 +88,10 @@ class BodyLease:
         self._lease_id: str | None = None
         # why the most recent lease ended, so a late renewal can be told the truth (log value only)
         self._ended: tuple[str, str] | None = None
+        # Read-only diagnostics; all timestamps use this body's monotonic clock.
+        self.body_id = uuid.uuid4().hex
+        self._last_renewed = 0.0
+        self._expiry_events: deque = deque(maxlen=32)
 
     # --- state -------------------------------------------------------------------------------
     def arm(self, action: str, params: dict | None, ttl_s: float | None = None, ok: bool = True) -> str:
@@ -96,7 +101,8 @@ class BodyLease:
                 self._ended = (self._lease_id, "superseded")  # whatever it was, this replaces it
             self._action = action
             self._params = dict(params or {})
-            self._deadline = self._clock() + (ttl_s if ttl_s is not None else self.ttl_s)
+            self._last_renewed = self._clock()
+            self._deadline = self._last_renewed + (ttl_s if ttl_s is not None else self.ttl_s)
             self._ok = ok
             self._lease_id = uuid.uuid4().hex
             return self._lease_id
@@ -104,7 +110,8 @@ class BodyLease:
     def extend(self, ttl_s: float | None = None) -> None:
         """Push the deadline of the running lease out by a full TTL. Does not start or change anything."""
         with self._state_lock:
-            self._deadline = self._clock() + (ttl_s if ttl_s is not None else self.ttl_s)
+            self._last_renewed = self._clock()
+            self._deadline = self._last_renewed + (ttl_s if ttl_s is not None else self.ttl_s)
 
     def disarm(self, reason: str = "stopped") -> None:
         with self._state_lock:
@@ -156,6 +163,16 @@ class BodyLease:
             return self._action is not None and self._clock() >= self._deadline
 
     # --- expiry ------------------------------------------------------------------------------
+    def diagnostics(self, adapter) -> dict:
+        """Snapshot only: never renew a lease or execute an adapter action."""
+        with self.exec_lock, self._state_lock:
+            return {"version": 1, "body_id": self.body_id, "adapter": adapter.name,
+                    "capabilities": sorted(adapter.capabilities),
+                    "dry_run": getattr(adapter, "dry_run", None),
+                    "servo_dryrun_env": os.environ.get("SERVO_DRYRUN") == "1",
+                    "lease_ttl_s": self.ttl_s, "lease_id": self._lease_id,
+                    "expiry_events": list(self._expiry_events)}
+
     def expire_if_due(self, adapter) -> dict | None:
         """If the lease ran out, STOP the body now. Returns an event dict, or None if nothing was due."""
         with self.exec_lock:
@@ -163,12 +180,26 @@ class BodyLease:
                 return None
             with self._state_lock:
                 action, params, lease_id = self._action, self._params, self._lease_id
+                timing = {"last_renewal_monotonic_s": self._last_renewed,
+                          "deadline_monotonic_s": self._deadline,
+                          "expiry_detected_monotonic_s": self._clock()}
             self.disarm("expired")
-            state = dispatch(adapter, "stop", {})
+            timing["stop_issued_monotonic_s"] = self._clock()
+            try:
+                state = dispatch(adapter, "stop", {})
+            except Exception as exc:
+                # Adapter I/O can raise as well as return a failed result. Keep the watcher
+                # alive and use the same retry protection and observable event in both cases.
+                state = {"action": "stop", "status": "failed", "updated_at": now_iso(),
+                         "error": f"{type(exc).__name__}: {exc}"}
+            timing["stop_finished_monotonic_s"] = self._clock()
             if state.get("status") != "completed":
                 # the body may still be moving: keep protecting it and retry the STOP shortly
                 self.arm(action or "", params, ttl_s=RETRY_TTL_S, ok=False)  # state unknown: a repeat re-runs
-            return {"event": "lease_expired", "action": action, "lease_id": lease_id, "stop": state}
+            event = {"event": "lease_expired", "action": action, "lease_id": lease_id,
+                     "body_id": self.body_id, **timing, "stop": state}
+            self._expiry_events.append(event)
+            return event
 
     async def watch(self, adapter, poll_s: float = 0.1, emit: Callable[[dict], None] | None = None) -> None:
         """Run next to the serve loop: STOP the body whenever its lease runs out."""
@@ -198,6 +229,9 @@ def guarded_dispatch(adapter, lease: BodyLease, action: str, params: dict | None
     """``dispatch`` plus the motion lease — the single body entry point for every seam backend."""
     name = _action_name(action)
     with lease.exec_lock:
+        if name == "lease_status":
+            return {"action": name, "status": "completed", "detail": lease.diagnostics(adapter),
+                    "updated_at": now_iso(), "error": None}
         if name == RENEW_ACTION:
             return _renew_state(lease, params)  # a lease-layer verb: extends a lease, can never start a motion
         if name in LEASED_ACTIONS:
