@@ -6,7 +6,9 @@ mapping and the capability routing are asserted anywhere — Mac, CI, or a Pi wi
 
 from __future__ import annotations
 
+import os
 import unittest
+from unittest import mock
 
 from control_daemon.adapters import LedAdapter, create_robot_adapter
 from pave_runtime.seam import dispatch
@@ -62,8 +64,10 @@ class LedAdapterTests(unittest.TestCase):
         self.assertEqual(state["status"], "unsupported")
 
     def test_registry_returns_led_adapter(self):
-        # no gpiozero on the test host → falls back to dry-run, still a LedAdapter
-        self.assertIsInstance(create_robot_adapter("led"), LedAdapter)
+        with mock.patch.dict(os.environ, {"LED_DRYRUN": "1"}):
+            adapter = create_robot_adapter("led")
+        self.assertIsInstance(adapter, LedAdapter)
+        self.assertTrue(adapter.dry_run)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ one test of the real watch loop at a tiny TTL).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import unittest
 from unittest import mock
@@ -57,6 +58,14 @@ class RecordingAdapter:
 def _lease(ttl=5.0):
     clock = FakeClock()
     return BodyLease(ttl_s=ttl, clock=clock), clock
+
+
+class RaisesOnceOnStop(RecordingAdapter):
+    def execute(self, action, params=None):
+        if action == "stop" and "stop" not in self.actions():
+            self.calls.append((action, dict(params or {})))
+            raise OSError("simulated STOP I/O failure")
+        return super().execute(action, params)
 
 
 class GuardedDispatchTests(unittest.TestCase):
@@ -224,8 +233,55 @@ class ExpiryTests(unittest.TestCase):
         self.assertFalse(self.lease.expired())
         self.assertIsNone(self.lease.expire_if_due(self.adapter))
 
+    def test_exceptional_expiry_stop_is_observable_and_retried(self):
+        adapter = RaisesOnceOnStop()
+        lease, clock = _lease()
+        started = guarded_dispatch(adapter, lease, "trot")["detail"]["lease_id"]
+        clock.advance(5)
+        event = lease.expire_if_due(adapter)
+        self.assertEqual(event["lease_id"], started)
+        self.assertEqual(event["stop"]["status"], "failed")
+        self.assertIn("OSError: simulated STOP I/O failure", event["stop"]["error"])
+        self.assertEqual(lease.diagnostics(adapter)["expiry_events"], [event])
+        self.assertEqual(lease.active_action(), "trot")
+        self.assertIsNone(lease.expire_if_due(adapter))  # retry is delayed, as for returned failures
+        clock.advance(1)
+        self.assertEqual(lease.expire_if_due(adapter)["stop"]["status"], "completed")
+        self.assertIsNone(lease.active_action())
+        self.assertEqual(adapter.actions(), ["trot", "stop", "stop"])
+
 
 class WatchLoopTests(unittest.TestCase):
+    def test_watcher_survives_adapter_exception_and_completes_retry(self):
+        adapter = RaisesOnceOnStop()
+        lease, clock = _lease()
+        events = []
+
+        async def scenario():
+            done = asyncio.Event()
+
+            def emit(event):
+                events.append(event)
+                if len(events) == 1:
+                    clock.advance(1)  # make the normal retry deadline due
+                else:
+                    done.set()
+
+            guarded_dispatch(adapter, lease, "trot")
+            clock.advance(5)
+            watcher = asyncio.create_task(lease.watch(adapter, poll_s=0.001, emit=emit))
+            try:
+                await asyncio.wait_for(done.wait(), timeout=2)
+                self.assertFalse(watcher.done())
+            finally:
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watcher
+
+        asyncio.run(scenario())
+        self.assertEqual([e["stop"]["status"] for e in events], ["failed", "completed"])
+        self.assertIsNone(lease.active_action())
+
     def test_the_real_watch_loop_stops_an_unrenewed_motion(self):
         adapter = RecordingAdapter()
         lease = BodyLease(ttl_s=0.15)  # real clock, tiny TTL

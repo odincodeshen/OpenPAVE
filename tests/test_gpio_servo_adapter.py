@@ -6,8 +6,10 @@ mapping, the trot sweep lifecycle, and the capability routing are asserted anywh
 
 from __future__ import annotations
 
+import os
 import time
 import unittest
+from unittest import mock
 
 from control_daemon.adapters import GpioServoAdapter, create_robot_adapter
 from pave_runtime.seam import dispatch
@@ -76,8 +78,10 @@ class GpioServoAdapterTests(unittest.TestCase):
         self.assertEqual(self.a.servo.angle, 90.0)
 
     def test_registry_returns_servo_adapter(self):
-        # no gpiozero on the test host → dry-run fallback, still a GpioServoAdapter
-        self.assertIsInstance(create_robot_adapter("gpio_servo"), GpioServoAdapter)
+        with mock.patch.dict(os.environ, {"SERVO_DRYRUN": "1"}):
+            adapter = create_robot_adapter("gpio_servo")
+        self.assertIsInstance(adapter, GpioServoAdapter)
+        self.assertTrue(adapter.dry_run)
 
 
 if __name__ == "__main__":

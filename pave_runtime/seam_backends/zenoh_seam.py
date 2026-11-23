@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 
 import zenoh  # lazy: only imported when the raw_zenoh backend is selected
 
@@ -50,7 +51,12 @@ class ZenohSeam:
                 p = json.loads(_payload_bytes(sample))
             except json.JSONDecodeError:
                 return
+            if not isinstance(p, dict) or p.get("body_id") not in (None, lease.body_id):
+                return
             state = guarded_dispatch(adapter, lease, p.get("action", ""), p.get("params"))
+            state = {**state, "body_id": lease.body_id}
+            if "correlation_id" in p:
+                state["correlation_id"] = p["correlation_id"]
             pub.put(json.dumps(state, ensure_ascii=False).encode("utf-8"))
 
         session.declare_subscriber(ACTION_KEY, on_action)
@@ -68,15 +74,32 @@ class ZenohSeam:
 
     async def send(self, action: str, params: dict | None = None,
                    *, target: str | None = None, timeout: float = 5.0) -> dict:
+        """Match only this request's reply; target optionally pins a lease_status body_id.
+
+        Requires a body that echoes correlation_id. Untargeted legacy clients can still
+        send to updated bodies, but updated clients cannot use uncorrelated old bodies.
+        """
         session = zenoh.open(_config())
         try:
             replies: list[dict] = []
-            session.declare_subscriber(STATE_KEY, lambda s: replies.append(json.loads(_payload_bytes(s))))
+            correlation_id = uuid.uuid4().hex
+
+            def on_state(sample):
+                try:
+                    state = json.loads(_payload_bytes(sample))
+                except (ValueError, UnicodeDecodeError):
+                    return
+                if (isinstance(state, dict) and state.get("correlation_id") == correlation_id
+                        and (target is None or state.get("body_id") == target)):
+                    replies.append(state)
+
+            session.declare_subscriber(STATE_KEY, on_state)
             pub = session.declare_publisher(ACTION_KEY)
             await asyncio.sleep(0.5)  # let discovery + subscription match
-            pub.put(json.dumps({"action": action, "params": params or {}}).encode("utf-8"))
-            deadline = time.time() + timeout
-            while time.time() < deadline and not replies:
+            pub.put(json.dumps({"action": action, "params": params or {},
+                                "correlation_id": correlation_id, "body_id": target}).encode("utf-8"))
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and not replies:
                 await asyncio.sleep(0.05)
         finally:
             session.close()  # also when cancelled mid-send (a shutdown signal), not only on the happy path

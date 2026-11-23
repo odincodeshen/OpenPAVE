@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
+import shlex
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from pave_runtime.application import create_application_runtime
 from pave_runtime.inference import InferenceResult, Observation
 from pave_runtime.shutdown import StopUnconfirmed
-from scripts.run_live import MotionGate, run_live
+from scripts.run_live import MotionGate, parse_args, run_live
 
 STALL = object()
 
@@ -72,6 +75,18 @@ def _drive(outputs, confirmations=2):
 
 
 class MotionGateTests(unittest.TestCase):
+    def test_documented_qwen_window_accepts_frame_period_and_processing_delay(self):
+        guide = (Path(__file__).resolve().parents[1] / "docs/runbooks/v1.8-quick-demo.md").read_text()
+        command = next(block for block in re.findall(r"```bash\n(.*?)```", guide, re.S)
+                       if "INFERENCE_MODEL=Qwen/" in block)
+        tokens = shlex.split(command.replace("\\\n", " "))
+        with mock.patch("sys.argv", ["run_live.py", *tokens[tokens.index("scripts/run_live.py") + 1:]]):
+            args = parse_args()  # also verifies the documented option names and units
+        gate = MotionGate(confirmations=args.confirmations, window_ms=args.confirmation_window_ms)
+        self.assertIsNone(gate.admit("trot", 0))
+        self.assertEqual(gate.admit("trot", args.period_seconds * 1000 + 3000), "trot")
+        self.assertEqual(MotionGate().window_ms, 1500)  # application default stays unchanged
+
     def test_motion_needs_consecutive_confirmations(self):
         g = MotionGate(confirmations=2, window_ms=1000)
         self.assertIsNone(g.admit("trot", 0))            # 1st sighting
